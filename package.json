@@ -1,0 +1,52 @@
+{
+  "name": "mcbot",
+  "productName": "MCBot",
+  "version": "1.0.0",
+  "description": "Türkçe komutlarla çalışan Minecraft botu: odun keser, maden kazar, demir ve elmas set yapar.",
+  "main": "main.js",
+  "author": "VoidTraveler",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "bot": "node bot.js",
+    "dagit": "electron-builder --win"
+  },
+  "dependencies": {
+    "mineflayer": "^4.39.0",
+    "mineflayer-pathfinder": "^2.4.5",
+    "vec3": "^0.2.0"
+  },
+  "devDependencies": {
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.mcbot.app",
+    "productName": "MCBot",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "bot.js",
+      "ayarlar.js",
+      "panel.js",
+      "gelisim.js",
+      "gelisim2.js",
+      "komutlar.js",
+      "build/icon.png",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "MCBot",
+      "artifactName": "MCBot-Kurulum-${version}.exe"
+    }
+  }
+}

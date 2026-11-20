@@ -1,0 +1,13 @@
+# kütüphaneler ve derleme çıktısı
+node_modules/
+dist/
+
+# kişisel ayarlar ve Microsoft girişi — ASLA paylaşmayın
+ayarlar.json
+hesap/
+
+# eski kopyalar
+*_yedek_*.js
+bot_eski.js
+bot_gelisimsiz.js
+bot.txt
