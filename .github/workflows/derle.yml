@@ -1,0 +1,120 @@
+# MCBot otomatik derleme.
+# GitHub'da yeni bir Release yayınlandığında (Releases > Create a new release > Publish):
+#   - Windows kurulum dosyası (MCBot-Kurulum-x.y.z.exe) ve
+#   - Android uygulaması (MCBot-x.y.z.apk)
+# otomatik derlenip o Release'e eklenir. Elle denemek için: Actions > Derle > Run workflow
+# (o zaman dosyalar Release'e değil, çalışmanın "Artifacts" bölümüne konur).
+#
+# Android uygulamasının hep aynı anahtarla imzalanması için iki "secret" tanımlanmalı
+# (Settings > Secrets and variables > Actions): MCBOT_IMZA_DOSYASI ve MCBOT_IMZA_SIFRE.
+# Tanımlı değilse uygulama yine derlenir ama telefonda eski sürümün üstüne kurulamaz.
+
+name: Derle
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    name: Windows (.exe)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Güncelleme uyarısı için depo adresini ekle
+        shell: bash
+        run: |
+          if [ -z "$(node -p "require('./package.json').repository || ''")" ]; then
+            npm pkg set repository="github:${GITHUB_REPOSITORY}"
+          fi
+
+      - name: Kütüphaneleri kur
+        run: npm install --no-audit --no-fund
+
+      - name: Kurulum dosyasını derle
+        run: npx electron-builder --win --publish never
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*.exe
+          if-no-files-found: error
+
+  android:
+    name: Android (.apk)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Telefon kütüphanelerini kur (Node 18 uyumlu)
+        working-directory: android/nodejs-project
+        run: npm ci --omit=dev --no-audit --no-fund
+
+      - name: Ortak bot dosyalarını ve Node.js motorunu hazırla
+        run: node android/hazirla.js
+
+      - name: İmza anahtarını yerleştir
+        env:
+          IMZA: ${{ secrets.MCBOT_IMZA_DOSYASI }}
+        run: |
+          if [ -n "$IMZA" ]; then
+            echo "$IMZA" | base64 -d > "$RUNNER_TEMP/mcbot.jks"
+            echo "MCBOT_IMZA_DOSYASI=$RUNNER_TEMP/mcbot.jks" >> "$GITHUB_ENV"
+          else
+            echo "::warning::MCBOT_IMZA_DOSYASI tanımlı değil: APK geçici anahtarla imzalanacak (telefonda güncelleme olarak kurulamaz)."
+          fi
+
+      - name: APK derle
+        working-directory: android
+        env:
+          MCBOT_IMZA_SIFRE: ${{ secrets.MCBOT_IMZA_SIFRE }}
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Dosya adını düzenle
+        run: |
+          SURUM=$(node -p "require('./package.json').version")
+          cp android/app/build/outputs/apk/release/app-release.apk "MCBot-$SURUM.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: MCBot-*.apk
+          if-no-files-found: error
+
+  yayinla:
+    name: Release'e ekle
+    if: github.event_name == 'release'
+    needs: [windows, android]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: cikti
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: cikti/*
