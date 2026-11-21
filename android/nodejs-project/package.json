@@ -1,0 +1,10 @@
+{
+  "name": "mcbot-android-node",
+  "private": true,
+  "description": "MCBot'un telefonda çalışan kısmının kütüphaneleri (Node 18 uyumlu, ocak 2025 sürümleri)",
+  "dependencies": {
+    "mineflayer": "4.25.0",
+    "mineflayer-pathfinder": "^2.4.5",
+    "vec3": "^0.1.10"
+  }
+}

@@ -4,6 +4,7 @@
 // Her adım önce envantere bakar; zaten olan şeyi tekrar yapmaz. Bu yüzden
 // yarıda kesilirse (!dur, ölüm, bağlantı kopması) tekrar !gelis yazınca kaldığı yerden devam eder.
 
+const evler = require('./evler')
 const { Vec3 } = require('vec3')
 const { goals } = require('mineflayer-pathfinder')
 
@@ -83,6 +84,7 @@ function gelisimKur(bot, hareket) {
   // bu yüzden süre sınırı koyuyoruz.
   async function git(hedef, ms = 60000) {
     kontrol()
+    await evler.kanca.kapiyiAc() // evin içindeysek önce kapıyı aç
     let zamanlayici
     try {
       await Promise.race([
@@ -200,7 +202,7 @@ function gelisimKur(bot, hareket) {
     const konumlar = bot.findBlocks({ matching: idler, maxDistance: yaricap, count: 40 })
     const ben = bot.entity.position
     const uygun = konumlar
-      .filter((p) => !kara.has(anahtar(p)))
+      .filter((p) => !kara.has(anahtar(p)) && !evler.korunuyorMu(p)) // kendi evimizi kazma
       // ayaklarımızdan çok yukarıdakiler (ağaç tepesi) sonra gelsin
       .sort((a, b) => {
         const ca = a.distanceTo(ben) + Math.max(0, a.y - ben.y - 2) * 4

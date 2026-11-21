@@ -31,6 +31,10 @@ function panelBaslat(kontrol) {
         gonder(200, { ...kontrol.durumAl(), ayarlar: ayarlar.oku() })
         return
       }
+      if (istek.method === 'GET' && istek.url === '/api/harita') {
+        gonder(200, kontrol.haritaAl() || { yok: true })
+        return
+      }
       if (istek.method === 'POST') {
         const govde = await govdeOku(istek)
         if (istek.url === '/api/ayarlar') {
@@ -100,8 +104,8 @@ function panelBaslat(kontrol) {
     sunucu.listen(PANEL_PORT, '127.0.0.1', () => {
       const adres = `http://localhost:${PANEL_PORT}`
       console.log(`Kontrol paneli: ${adres}`)
-      // Uygulama olarak çalışırken panel kendi penceresinde açılır, tarayıcı açılmaz
-      if (ayarlar.oku().paneliAc && !process.env.MCBOT_ELECTRON) {
+      // Uygulama olarak (bilgisayar penceresi ya da telefon) çalışırken panel kendi penceresinde açılır
+      if (ayarlar.oku().paneliAc && !process.env.MCBOT_ELECTRON && !process.env.MCBOT_MOBIL) {
         const komut = process.platform === 'win32' ? `start "" "${adres}"`
           : process.platform === 'darwin' ? `open "${adres}"` : `xdg-open "${adres}"`
         exec(komut, () => {})
@@ -228,6 +232,12 @@ const SAYFA = `<!DOCTYPE html>
   .uyari[hidden] { display: none; }
   .uyari.hata { background: var(--kirmizi-acik); color: #7d2416; border: 1px solid #efc7bf; }
   .uyari.msa { background: var(--sari-acik); color: #6b4a12; border: 1px solid #ecd3a3; }
+  .uyari.yeni { background: #e6effb; color: #1d3f73; border: 1px solid #bcd0ee; }
+  /* harita */
+  .harita-kutu { position: relative; width: 100%; max-width: 390px; }
+  #harita { width: 100%; aspect-ratio: 1; image-rendering: pixelated; border-radius: 8px; background: #1c1f24; display: block; }
+  .harita-alt { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--soluk); margin-top: 8px; }
+  .harita-alt i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
   .uyari .kod { font: 700 22px/1.2 Consolas, "Cascadia Mono", monospace; letter-spacing: .12em; background: #fff;
     padding: 4px 10px; border-radius: 6px; display: inline-block; margin: 6px 6px 0 0; user-select: all; }
   .uyari a { color: inherit; font-weight: 700; }
@@ -249,6 +259,10 @@ const SAYFA = `<!DOCTYPE html>
   <span id="rozet" class="rozet">Yükleniyor…</span>
 </header>
 <div class="uyarilar">
+  <div id="u-yeni" class="uyari yeni" hidden>
+    <b>Yeni sürüm var:</b> MCBot <span id="u-yeni-surum"></span> (sizdeki <span id="u-yeni-eski"></span>).
+    <a id="u-yeni-adres" href="#" target="_blank" rel="noopener">İndirme sayfasını aç</a>
+  </div>
   <div id="u-hata" class="uyari hata" hidden></div>
   <div id="u-msa" class="uyari msa" hidden>
     <b>Microsoft hesabıyla giriş:</b> <a id="u-msa-adres" href="#" target="_blank" rel="noopener"></a>
@@ -317,6 +331,18 @@ const SAYFA = `<!DOCTYPE html>
   </section>
 
   <section class="kart">
+    <h2>Harita</h2>
+    <div class="harita-kutu"><canvas id="harita" width="390" height="390"></canvas></div>
+    <div class="harita-alt">
+      <span><i style="background:#fff;border:1px solid #333"></i>Bot (ok baktığı yön)</span>
+      <span><i style="background:#3d8bfd"></i>Oyuncu</span>
+      <span><i style="background:#e5413a"></i>Düşman</span>
+      <span>Kuzey yukarıda · 65×65 blok</span>
+    </div>
+    <p class="ipucu" id="harita-bilgi" style="margin-bottom:0">–</p>
+  </section>
+
+  <section class="kart">
     <h2>Bağlantı ayarları</h2>
     <form id="f-ayar" autocomplete="off">
       <label for="i-host">Sunucu adresi</label>
@@ -357,7 +383,7 @@ const SAYFA = `<!DOCTYPE html>
     </form>
   </section>
 </main>
-<footer style="text-align:center;color:var(--soluk);font-size:13px;padding:0 0 22px">MCBot — VoidTraveler tarafından yapılmıştır</footer>
+<footer style="text-align:center;color:var(--soluk);font-size:13px;padding:0 0 22px">MCBot <span id="surum"></span> — VoidTraveler tarafından yapılmıştır</footer>
 <div id="bildirim"></div>
 
 <script>
@@ -494,6 +520,13 @@ async function yenile() {
   $('u-hata').hidden = !v.sonHata
   $('u-hata').textContent = v.sonHata || ''
   $('u-msa').hidden = !v.msaKod
+  $('surum').textContent = v.surum || ''
+  $('u-yeni').hidden = !v.guncelleme
+  if (v.guncelleme) {
+    $('u-yeni-surum').textContent = v.guncelleme.surum
+    $('u-yeni-eski').textContent = v.surum
+    $('u-yeni-adres').href = v.guncelleme.adres
+  }
   if (v.msaKod) {
     $('u-msa-adres').textContent = v.msaKod.adres
     $('u-msa-adres').href = v.msaKod.adres
@@ -597,6 +630,56 @@ for (const [id, yol] of [['b-baslat', '/api/baslat'], ['b-durdur', '/api/durdur'
 
 yenile()
 setInterval(yenile, 1000)
+
+// ---------------------------------------------------------------- harita
+async function haritaYenile() {
+  if (document.hidden || $('ana').hidden) return
+  let h
+  try { h = await istek('/api/harita') } catch (e) { return }
+  const cv = $('harita')
+  const c = cv.getContext('2d')
+  c.fillStyle = '#1c1f24'
+  c.fillRect(0, 0, cv.width, cv.height)
+  if (!h || h.yok) {
+    $('harita-bilgi').textContent = 'Bot oyunda değil.'
+    return
+  }
+  const n = h.n
+  const s = cv.width / n
+  for (let i = 0; i < n * n; i++) {
+    if (!h.renkler[i]) continue
+    c.fillStyle = h.renkler[i]
+    c.fillRect((i % n) * s, Math.floor(i / n) * s, Math.ceil(s), Math.ceil(s))
+  }
+  const yer = (dx, dz) => [(dx + h.r + 0.5) * s, (dz + h.r + 0.5) * s]
+  const nokta = (x, y, r, renk) => {
+    c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2)
+    c.fillStyle = renk; c.fill(); c.lineWidth = 1.5; c.strokeStyle = '#111'; c.stroke()
+  }
+  for (const d of h.dusmanlar) { const [x, y] = yer(d.dx, d.dz); nokta(x, y, s * 0.75, '#e5413a') }
+  c.font = 'bold 11px system-ui, sans-serif'
+  c.textAlign = 'center'
+  for (const o of h.oyuncular) {
+    const [x, y] = yer(o.dx, o.dz)
+    nokta(x, y, s * 0.9, '#3d8bfd')
+    c.lineWidth = 3; c.strokeStyle = 'rgba(0,0,0,.75)'; c.strokeText(o.ad, x, y - s * 1.4)
+    c.fillStyle = '#fff'; c.fillText(o.ad, x, y - s * 1.4)
+  }
+  // bot: baktığı yöne dönük ok (yaw 0 = kuzey, yön vektörü (-sin, -cos))
+  const [bx, by] = yer(0, 0)
+  const ix = -Math.sin(h.yon), iy = -Math.cos(h.yon)
+  const r = s * 1.6
+  c.beginPath()
+  c.moveTo(bx + ix * r, by + iy * r)
+  c.lineTo(bx - ix * r * 0.6 - iy * r * 0.7, by - iy * r * 0.6 + ix * r * 0.7)
+  c.lineTo(bx - ix * r * 0.6 + iy * r * 0.7, by - iy * r * 0.6 - ix * r * 0.7)
+  c.closePath()
+  c.fillStyle = '#fff'; c.fill(); c.lineWidth = 1.5; c.strokeStyle = '#111'; c.stroke()
+  $('harita-bilgi').textContent = (h.yuzeyde ? 'Yer üstü' : 'Yer altı (botun katı)') + ' · Merkez: ' + h.merkez.join(' ') + ' · ' +
+    h.oyuncular.length + ' oyuncu, ' + h.dusmanlar.length + ' düşman yakında'
+}
+setInterval(haritaYenile, 2000)
+haritaYenile()
 </script>
 </body>
 </html>`

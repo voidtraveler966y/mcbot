@@ -6,8 +6,24 @@ dist/
 ayarlar.json
 hesap/
 
-# eski kopyalar
+# Android uygulamasının imza anahtarı — ASLA paylaşmayın (sadece GitHub "secret" olarak girilir)
+imza/
+
+# Android derleme dosyaları (otomatik oluşur)
+android/.gradle/
+android/build/
+android/app/build/
+android/app/.cxx/
+android/app/libnode/
+android/nodejs-project/node_modules/
+android/local.properties
+
+# eski kopyalar ve yedekler
 *_yedek_*.js
+yedek_*/
 bot_eski.js
 bot_gelisimsiz.js
 bot.txt
+
+# GitHub web sitesinde oluşturulacak dosyanın kopyası (bkz. github-icin/derle.yml)
+github-icin/

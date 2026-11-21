@@ -1,0 +1,93 @@
+// MCBot Android uygulaması.
+// Derlemeden önce bot dosyaları hazırlanmalı:  node android/hazirla.js
+// (GitHub'daki otomatik derleme bunu kendisi yapar: .github/workflows/derle.yml)
+
+import groovy.json.JsonSlurper
+
+plugins {
+    id 'com.android.application'
+}
+
+// Sürüm numarası ana package.json'dan gelir: bilgisayar ve telefon sürümü hep aynı numarayı taşır
+def kokPaket = new JsonSlurper().parse(file('../../package.json'))
+def surum = kokPaket.version as String
+def parca = surum.tokenize('.').collect { (it.replaceAll(/[^0-9].*$/, '') ?: '0') as int }
+while (parca.size() < 3) parca << 0
+
+def imzaDosyasi = System.getenv('MCBOT_IMZA_DOSYASI')
+def imzaSifresi = System.getenv('MCBOT_IMZA_SIFRE')
+
+android {
+    namespace 'com.mcbot.app'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.mcbot.app'
+        minSdk 24
+        targetSdk 35
+        versionCode parca[0] * 10000 + parca[1] * 100 + parca[2]
+        versionName surum
+        // Gerçek telefon işlemcileri (x86_64 sadece emülatör içindir, uygulamayı büyütmesin)
+        ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
+        externalNativeBuild {
+            cmake { arguments '-DANDROID_STL=c++_shared' }
+        }
+    }
+
+    externalNativeBuild {
+        cmake { path 'src/main/cpp/CMakeLists.txt' }
+    }
+
+    signingConfigs {
+        imza {
+            if (imzaDosyasi) {
+                storeFile file(imzaDosyasi)
+                storePassword imzaSifresi
+                keyAlias 'mcbot'
+                keyPassword imzaSifresi
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // İmza anahtarı verilmediyse geçici (debug) anahtarla imzalanır;
+            // o zaman telefondaki eski sürümün üstüne güncelleme olarak kurulamaz.
+            signingConfig imzaDosyasi ? signingConfigs.imza : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    // Node.js motoru büyük (~60 MB): uygulamanın içinde sıkıştırılmış dursun, kurulurken açılsın
+    packaging {
+        jniLibs { useLegacyPackaging true }
+    }
+
+    sourceSets {
+        main { assets.srcDir(layout.buildDirectory.dir('uretilen-assets').get().asFile) }
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}
+
+// Bot dosyalarını (build/nodejs-project) tek bir zip olarak uygulamaya koy
+def projeKlasoru = layout.buildDirectory.dir('nodejs-project')
+def paketle = tasks.register('nodeProjesiniPaketle', Zip) {
+    from projeKlasoru
+    archiveFileName = 'nodejs-project.zip'
+    destinationDirectory = layout.buildDirectory.dir('uretilen-assets')
+    doFirst {
+        if (!projeKlasoru.get().asFile.isDirectory()) {
+            throw new GradleException('Önce bot dosyalarını hazırlayın: node android/hazirla.js')
+        }
+    }
+}
+preBuild.dependsOn paketle

@@ -4,6 +4,10 @@ const { pathfinder, Movements, goals } = require('mineflayer-pathfinder')
 const { gelisimKur } = require('./gelisim')
 const { gelisim2Kur } = require('./gelisim2')
 const { komutlarKur } = require('./komutlar')
+const { evKur } = require('./ev')
+const harita = require('./harita')
+const guncelleme = require('./guncelleme')
+const evler = require('./evler')
 const ayarlar = require('./ayarlar')
 const { panelBaslat } = require('./panel')
 const util = require('util')
@@ -55,13 +59,14 @@ const TEKRAR_BAGLANMA_SN = 15
 //   !topla malzeme [adet] -> odun, tas, komur, demir, bakir, altin, toprak, kum, cakil (varsayılan 16)
 //   !yap eşya [adet]  -> üretir (gerekirse çalışma masası koyar). Örnek: !yap mesale 8, !yap tas kazma
 //   !uyu              -> gece ise en yakın yatağa gidip uyur;  !uyu oto -> her gece kendisi uyusun (aç/kapa)
+//   !ev               -> yakındaki düz bir yere kendine 5x5 taş ev yapar (malzemeyi kendisi toplar)
 // Hem genel sohbetten hem de /msg ile yazılanlar çalışır.
 
 const YARDIM = [
   '!gom, !egil, !kalk, !git x y z, !git x z',
   '!yaz mesaj, !spawn, !gel, !takip [isim], !vur [isim], !yumruk [isim], !dur, !konum, !durum',
   '!gelis (demir set), !gelis2 (elmas set), !envanter, !yardimet',
-  '!ver [isim] esya [adet], !sandik [hepsi|esya], !topla odun 32, !yap mesale 8, !uyu, !uyu oto',
+  '!ver [isim] esya [adet], !sandik [hepsi|esya], !topla odun 32, !yap mesale 8, !uyu, !uyu oto, !ev',
 ]
 
 let otoUyku = false // !uyu oto: her gece kendiliğinden yatağa gitsin (yeniden bağlanınca da kalır)
@@ -188,6 +193,7 @@ const kontrol = {
     }
   },
   calisiyorMu: () => calisiyor,
+  haritaAl: () => harita.haritaAl(aktifBot),
   sohbet(metin) {
     if (!aktifBot || !aktifBot.entity) return false
     aktifBot.chat(metin)
@@ -201,6 +207,8 @@ const kontrol = {
       calisiyor,
       oyunda,
       sonHata,
+      surum: guncelleme.surum,
+      guncelleme: guncelleme.bilgi(),
       msaKod: msaKod && msaKod.bitis > Date.now() ? msaKod : null,
       sunucu: baglanilanSunucu,
       bot: oyunda ? {
@@ -302,6 +310,7 @@ async function baglan() {
   let gelisim = null // !gelis beyni, dünyaya doğunca kurulur
   let gelisim2 = null // !gelis2 beyni (elmas set)
   let komutlar = null // !ver, !sandik, !topla, !yap, !uyu
+  let evYapici = null // !ev
   let calisanIs = '' // ölünce "tekrar denemek için ... yaz" diyebilmek için
 
   bot.loadPlugin(pathfinder)
@@ -325,11 +334,60 @@ async function baglan() {
     for (const blok of bot.registry.blocksArray) {
       if (KIRMA_YASAK(blok.name)) hareket.blocksCantBreak.add(blok.id)
     }
+    // Kendi evlerimizin bloklarını asla kırma; kapılardan açarak geç
+    hareket.exclusionAreasBreak.push((blok) => (evler.korunuyorMu(blok.position) ? 100 : 0))
+    hareket.canOpenDoors = true // çit kapıları için
+    evler.kapilardanGec(hareket) // ahşap kapılardan geçebilsin (kapıyı aşağıda yürürken açıyoruz)
     bot.pathfinder.setMovements(hareket)
     bot.pathfinder.thinkTimeout = 10000 // uzun yollar için daha çok düşünsün
     gelisim = gelisimKur(bot, hareket)
     gelisim2 = gelisim2Kur(bot, gelisim.araclar)
     komutlar = komutlarKur(bot, gelisim.araclar)
+    evYapici = evKur(bot, gelisim.araclar, komutlar, hareket)
+  })
+
+  // Evimizin içindeyken bir yere gidilecekse önce kapıyı aç
+  // (yol bulucunun kendi kapı açması bazı sunucularda takılabiliyor)
+  let kapiAciliyor = false
+  async function kapiyiAc() {
+    if (kapiAciliyor || !bot.entity) return
+    const e = evler.icindekiEv(bot.entity.position)
+    if (!e) return
+    const kapi = bot.blockAt(new Vec3(e.x, e.y, e.z + 2))
+    if (!kapi || !kapi.name.endsWith('_door') || kapi.name === 'iron_door') return
+    if (String((kapi.getProperties() || {}).open) === 'true') return
+    kapiAciliyor = true
+    try {
+      await bot.lookAt(kapi.position.offset(0.5, 0.5, 0.5), true)
+      await bot.activateBlock(kapi)
+      await bot.waitForTicks(4)
+    } catch (err) {
+      console.log('[Ev] Kapıyı açamadım:', err.message)
+    } finally {
+      kapiAciliyor = false
+    }
+  }
+  evler.kanca.kapiyiAc = kapiyiAc
+
+  // Yürürken yolun üstündeki kapalı ahşap kapıyı, yaklaşınca aç
+  let sonYol = []
+  let kapiTik = 0
+  bot.on('path_update', (sonuc) => { sonYol = (sonuc && sonuc.path) || [] })
+  bot.on('goal_reached', () => { sonYol = [] })
+  bot.on('physicsTick', () => {
+    if (++kapiTik % 4 !== 0 || !sonYol.length || kapiAciliyor || !bot.entity) return
+    const ben = bot.entity.position
+    for (const n of sonYol) {
+      if (Math.abs(n.x - ben.x) > 3 || Math.abs(n.z - ben.z) > 3 || Math.abs(n.y - ben.y) > 2) continue
+      const b = bot.blockAt(new Vec3(Math.floor(n.x), Math.floor(n.y), Math.floor(n.z)))
+      if (b && evler.GECILIR_KAPI(b.name) && String((b.getProperties() || {}).open) !== 'true') {
+        kapiAciliyor = true
+        bot.activateBlock(b)
+          .catch((err) => console.log('[Ev] Kapıyı açamadım:', err.message))
+          .finally(() => { kapiAciliyor = false })
+        return
+      }
+    }
   })
 
   // Zırh kırılınca (ya da bir yuva boşsa) envanterdeki en iyi yedeği giy
@@ -618,6 +676,15 @@ async function baglan() {
         )
         return
 
+      case '!ev':
+        if (!evYapici) {
+          cevap('Daha dünyaya doğmadım, biraz bekle.')
+          return
+        }
+        bot.setControlState('sneak', false)
+        await isYap(cevap, () => evYapici.ev(cevap), null, 'Ev yapamadım: ', '!ev')
+        return
+
       case '!ver':
       case '!sandik':
       case '!topla':
@@ -831,6 +898,7 @@ async function gomVeKapat(bot) {
 
 const panel = panelBaslat(kontrol)
 baslat()
+guncelleme.baslat()
 
 // Uygulama (main.js) botu kapatmak ve paneli açmak için bunları kullanır
 module.exports = { kontrol, panelHazir: panel.hazir }
