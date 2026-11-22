@@ -2,7 +2,10 @@
 # GitHub'da yeni bir Release yayınlandığında (Releases > Create a new release > Publish):
 #   - Windows kurulum dosyası (MCBot-Kurulum-x.y.z.exe) ve
 #   - Android uygulaması (MCBot-x.y.z.apk)
-# otomatik derlenip o Release'e eklenir. Elle denemek için: Actions > Derle > Run workflow
+# otomatik derlenip o Release'e eklenir. Ayrıca sürüm numarasız kopyaları da eklenir
+# (MCBot-Kurulum.exe, MCBot.apk): tanıtım sayfasındaki "İndir" düğmeleri hep en son sürümü şu adreslerden indirir:
+#   https://github.com/voidtraveler966y/mcbot/releases/latest/download/MCBot-Kurulum.exe
+#   https://github.com/voidtraveler966y/mcbot/releases/latest/download/MCBot.apk Elle denemek için: Actions > Derle > Run workflow
 # (o zaman dosyalar Release'e değil, çalışmanın "Artifacts" bölümüne konur).
 #
 # Android uygulamasının hep aynı anahtarla imzalanması için iki "secret" tanımlanmalı
@@ -113,6 +116,12 @@ jobs:
         with:
           path: cikti
           merge-multiple: true
+
+      - name: Sürüm numarasız kopyalar (sitedeki "İndir" düğmeleri için)
+        run: |
+          cp cikti/MCBot-Kurulum-*.exe cikti/MCBot-Kurulum.exe
+          cp cikti/MCBot-*.apk cikti/MCBot.apk
+          ls -la cikti
 
       - uses: softprops/action-gh-release@v3
         with:
