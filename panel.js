@@ -261,7 +261,7 @@ const SAYFA = `<!DOCTYPE html>
 <div class="uyarilar">
   <div id="u-yeni" class="uyari yeni" hidden>
     <b>Yeni sürüm var:</b> MCBot <span id="u-yeni-surum"></span> (sizdeki <span id="u-yeni-eski"></span>).
-    <a id="u-yeni-adres" href="#" target="_blank" rel="noopener">İndirme sayfasını aç</a>
+    <a id="u-yeni-adres" href="#" target="_blank" rel="noopener">MCBot sitesinden indir</a>
   </div>
   <div id="u-hata" class="uyari hata" hidden></div>
   <div id="u-msa" class="uyari msa" hidden>

@@ -2,7 +2,7 @@
 
 VoidTraveler tarafından yapılmıştır.
 
-Türkçe komutlarla çalışan bir Minecraft (Java Edition) botu. Sohbete `!gel`, `!topla odun 32`, `!gelis` gibi komutlar yazarsınız; bot yürür, kazar, eşya yapar, kendini korur. Kendi kontrol paneli vardır: can, açlık, envanter, kuş bakışı harita ve kayıtlar canlı görünür. Yeni sürüm çıkınca panel haber verir.
+Türkçe komutlarla çalışan bir Minecraft (Java Edition) botu. Sohbete `!gel`, `!topla odun 32`, `!gelis` gibi komutlar yazarsınız; bot yürür, kazar, eşya yapar, kendini korur. Kendi kontrol paneli vardır: can, açlık, envanter, kuş bakışı harita ve kayıtlar canlı görünür. Yeni sürüm çıkınca panel haber verir ve tek tıkla [web sitesindeki](https://voidtraveler966y.github.io/mcbotwebsite/) indirme bölümüne götürür.
 
 ## Kurulum (kullanıcılar için)
 
@@ -127,7 +127,7 @@ Dosyalar:
 - `koylu.js` — `!ev koylu` (köylü evi: plan, yün/cam/meşale hazırlığı, inşaat)
 - `evler.js` — yapılan evlerin listesi: bot bu evlerin bloklarını kırmaz, kapılarından açarak geçer
 - `harita.js` — paneldeki kuş bakışı harita
-- `guncelleme.js` — GitHub'da yeni sürüm var mı diye bakar (`package.json` içindeki `repository` alanına göre)
+- `guncelleme.js` — GitHub'da yeni sürüm var mı diye bakar (`package.json` içindeki `repository` alanına göre). Varsa panelde "Yeni sürüm var" kutusu çıkar; linki MCBot'un web sitesinin indirme bölümünü açar (`package.json` → `homepage`)
 - `panel.js` — kontrol paneli (sadece bu bilgisayardan erişilir)
 - `ayarlar.js` — ayarlar. Uygulamada ayarlar `%APPDATA%\MCBot\ayarlar.json` dosyasında durur.
 

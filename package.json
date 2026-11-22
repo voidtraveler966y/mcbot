@@ -1,12 +1,13 @@
 {
   "name": "mcbot",
   "productName": "MCBot",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Türkçe komutlarla çalışan Minecraft botu: odun keser, maden kazar, demir ve elmas set yapar.",
   "main": "main.js",
   "author": "VoidTraveler",
   "license": "MIT",
   "repository": "github:voidtraveler966y/mcbot",
+  "homepage": "https://voidtraveler966y.github.io/mcbotwebsite/",
   "scripts": {
     "start": "electron .",
     "bot": "node bot.js",
