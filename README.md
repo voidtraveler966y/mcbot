@@ -29,10 +29,25 @@ Türkçe komutlarla çalışan bir Minecraft (Java Edition) botu. Sohbete `!gel`
 | `!topla malzeme [adet]` | odun, tas, komur, demir, bakir, altin, toprak, kum, cakil |
 | `!yap eşya [adet]` | Üretir. Örnek: `!yap mesale 8`, `!yap tas kazma` |
 | `!uyu`, `!uyu oto` | Gece yatağa gidip uyur / her gece kendisi uyusun |
-| `!ev` | Yakındaki düz bir yere kendine içi 3×3 taş ev yapar: kapı, masa, meşale, (varsa) yatak. Malzemeyi kendisi toplar |
+| `!ev`, `!ev koylu` | Kendine ev yapar: taş ev ya da köylü evi (aşağıdaki **Evler** bölümüne bakın) |
 | `!spawn`, `!gom`, `!egil`, `!kalk`, `!konum`, `!durum`, `!envanter`, `!yaz mesaj` | Diğer komutlar |
 
-Türkçe harfle de yazılabilir (`!göm`, `!kılıç` gibi).
+Türkçe harfle de yazılabilir (`!göm`, `!kılıç`, `!ev köylü` gibi).
+
+## Evler
+
+Bot yakında düz ve boş bir yer bulup kendine ev yapar. Malzemeyi kendisi toplar ve üretir. Yarıda kalırsa (`!dur`, ölüm, bağlantı kopması) aynı komutu tekrar yazınca sadece eksikleri tamamlar. Evleri birbirinden en az 8 blok uzağa kurar ki kapıların önü kapanmasın.
+
+| Komut | Ev | Malzeme (yaklaşık) |
+|---|---|---|
+| `!ev` | **Taş ev** — dışı 5×5, içi 3×3. Taş duvarlar, düz tahta çatı, kapı; içinde çalışma masası, meşale, (varsa) yatak | 46 taş, 10 kütük |
+| `!ev koylu` | **Köylü evi** — eski köylerdeki klasik ev. Dışı 5×5, içi 3×3. Yerden bir blok yüksek taş taban, köşelerde taş sütunlar, tahta duvarlar, üstte yatay kütük kuşak, çit korkuluklu düz çatı, üç duvarda cam pencere, kapı ve önünde merdiven basamağı. İçinde çalışma masası, sandık, yatak ve meşale | 45 taş, 45–50 kütük, 6 kum, 3 yün |
+
+Köylü evi için:
+- **Yün:** Yatak için aynı renkten 3 yün gerekir. Bot koyun arar; **makası varsa kırkar, yoksa keser**. Kuzulara ve kırkılmış koyunlara dokunmaz. Yakında koyun yoksa evi yataksız yapar ve söyler.
+- **Cam:** Kumu fırında eritip cam panel yapar. Kum bulamazsa pencereleri boş bırakır; kum bulununca `!ev koylu` tekrar yazılırsa tamamlar.
+- **Meşale:** Kömürü yoksa fırında bir kütükten odun kömürü yapar.
+- Yer: 5×5 düz zemin, üstünde 6 blok boşluk ve kapı önünde 2 blok gerekir. Malzeme sıfırdan toplanıyorsa iş uzun sürebilir.
 
 ## Kurallar — lütfen okuyun
 
@@ -108,7 +123,8 @@ Dosyalar:
 - `bot.js` — bağlantı ve sohbet komutları
 - `gelisim.js`, `gelisim2.js` — `!gelis` ve `!gelis2` beyni
 - `komutlar.js` — `!ver`, `!sandik`, `!topla`, `!yap`, `!uyu`
-- `ev.js` — `!ev` (ev yapma)
+- `ev.js` — `!ev` (taş ev) ve evlerin ortak blok koyma araçları
+- `koylu.js` — `!ev koylu` (köylü evi: plan, yün/cam/meşale hazırlığı, inşaat)
 - `evler.js` — yapılan evlerin listesi: bot bu evlerin bloklarını kırmaz, kapılarından açarak geçer
 - `harita.js` — paneldeki kuş bakışı harita
 - `guncelleme.js` — GitHub'da yeni sürüm var mı diye bakar (`package.json` içindeki `repository` alanına göre)

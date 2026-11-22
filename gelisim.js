@@ -489,6 +489,13 @@ function gelisimKur(bot, hareket) {
     await uret('crafting_table', 1)
   })
 
+  // Fırın: elimizdekini koy, yoksa yakındakini kullan, o da yoksa 8 taştan yap (koylu.js cam için kullanır)
+  const firinHazirla = () => blokHazirla('furnace', async () => {
+    const masa = await masaHazirla()
+    await uret('furnace', 1, masa.blok)
+    await geriTopla(masa)
+  })
+
   // ---------------------------------------------------------- aşamalar
   function eksikDemirEsyalar() {
     return DEMIR_ESYALAR.filter(([isim]) => !varMi(isim))
@@ -912,7 +919,7 @@ function gelisimKur(bot, hareket) {
     baslat: (cevap) => { durum.iptal = false; soyle = cevap },
     git, bekle, kontrol, say, varMi, giyin, yemekYe, copAt, yerAc, topla,
     blokBul, bulVeKaz, kesfet, yardimIste, eritmeAsamasi, envanterOzeti, konumYazi,
-    blokKaz, uret, tahtaYap, cubukYap, masaHazirla, geriTopla, kazmaYenile, tahtaSay, kutukSay,
+    blokKaz, uret, tahtaYap, cubukYap, masaHazirla, firinHazirla, geriTopla, kazmaYenile, tahtaSay, kutukSay,
     demirSetTamam: () => !eksikDemirEsyalar().length,
   }
 

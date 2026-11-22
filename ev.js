@@ -115,6 +115,7 @@ function evKur(bot, a, komutlar, anaHareket) {
   // ------------------------------------------------------------------ yer seçimi
   // m: evin ortası, zemin hizasında (ayağının bastığı blok m.y - 1)
   function yerUygunMu(m) {
+    if (evler.yakindaEvVar(m)) return false // başka evimizin dibine (kapısının önüne) kurma
     for (let dx = -2; dx <= 2; dx++) {
       for (let dz = -2; dz <= 2; dz++) {
         if (!katiMi(bot.blockAt(m.offset(dx, -1, dz)))) return false
@@ -151,6 +152,7 @@ function evKur(bot, a, komutlar, anaHareket) {
   function yarimEvBul() {
     const p = bot.entity.position.floored()
     const kayitli = evler.hepsi()
+      .filter((e) => e.tur !== 'koylu') // köylü evleri !koylu ile tamamlanır
       .map((e) => new Vec3(e.x, e.y, e.z))
       .filter((m) => m.distanceTo(p) <= 32)
       .sort((x, y) => x.distanceTo(p) - y.distanceTo(p))
@@ -204,8 +206,9 @@ function evKur(bot, a, komutlar, anaHareket) {
   }
 
   // ------------------------------------------------------------------ blok koyma
-  function komsuBul(hedef) {
-    for (const yon of YONLER) {
+  // yonler: hangi yönden dayanak aranacağı (kütüğü yatay koymak için tek yön verilir)
+  function komsuBul(hedef, yonler = YONLER) {
+    for (const yon of yonler) {
       const ref = bot.blockAt(hedef.minus(yon))
       if (katiMi(ref) && !ETKILESIMLI.test(ref.name)) return { ref, yon }
     }
@@ -246,7 +249,8 @@ function evKur(bot, a, komutlar, anaHareket) {
 
   // durus: durulabilecek yerler (verilen sırayla denenir; sirala=true ise yakından uzağa)
   // zorla: menzilde olsa bile ilk duruş yerine git (yatak/kapı yönü için)
-  async function koy(hedef, adlar, durus, { zorla = false, sirala = true } = {}) {
+  // yonler: sadece bu yönlerdeki bloklara dayan (varsayılan: önce alttaki, sonra yanlar)
+  async function koy(hedef, adlar, durus, { zorla = false, sirala = true, yonler = YONLER } = {}) {
     a.kontrol()
     const mevcut = bot.blockAt(hedef)
     if (!mevcut) throw new Error('o bölge yüklenmemiş')
@@ -255,7 +259,7 @@ function evKur(bot, a, komutlar, anaHareket) {
       if (katiMi(mevcut) || ayniMi) return true // zaten dolu
       if (!bosMu(mevcut)) throw new Error(`${hedef} dolu (${mevcut.name})`)
     }
-    const komsu = komsuBul(hedef)
+    const komsu = komsuBul(hedef, yonler)
     if (!komsu) return false // henüz dayanacak blok yok, sonra tekrar denenir
     const esya = esyaSec(adlar)
     if (!esya) throw new Error('malzemem bitti')
@@ -393,7 +397,8 @@ function evKur(bot, a, komutlar, anaHareket) {
     return m
   }
 
-  return { ev, yerBul, yerUygunMu }
+  // koylu.js de aynı blok koyma araçlarını kullanır
+  return { ev, yerBul, yerUygunMu, koy, katiMi, bosMu, havaMi, DUVAR_TASI }
 }
 
 module.exports = { evKur }

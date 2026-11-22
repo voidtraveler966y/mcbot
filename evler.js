@@ -2,6 +2,8 @@
 // Bu evlerin blokları korunur: yol bulucu kırmaz, !topla tas gibi işler kazmaz.
 // Her ev sunucu adresiyle birlikte kaydedilir; başka sunucuya geçince o sunucunun evleri geçerli olur.
 // Ev kutusu: ortanın (x,y,z) ±2 yanı, zemin (y-1) dahil çatıya (y+3) kadar.
+// Köylü evi (tur: 'koylu'): y = içerideki zemin hizası; taş taban y-1, çit korkuluk y+4'e kadar,
+// kapının önündeki merdiven basamağı da (x, y-1, z+3) korunur.
 
 const ayarlar = require('./ayarlar')
 
@@ -17,25 +19,36 @@ function hepsi() {
   return onbellek
 }
 
-function ekle(m) {
+function ekle(m, tur = 'tas') {
   const a = ayarlar.oku()
   const evler = Array.isArray(a.evler) ? a.evler : []
   if (evler.some((e) => e.sunucu === a.host && e.x === m.x && e.y === m.y && e.z === m.z)) return
-  evler.push({ sunucu: a.host, x: m.x, y: m.y, z: m.z })
+  evler.push({ sunucu: a.host, x: m.x, y: m.y, z: m.z, tur })
   ayarlar.yaz({ ...a, evler })
   onbellek = null
   console.log(`[Ev] Kaydedildi, artık korunuyor: ${m.x} ${m.y} ${m.z}`)
 }
 
 function evinde(p, e, pay = 0) {
-  return Math.abs(Math.floor(p.x) - e.x) <= 2 + pay && Math.abs(Math.floor(p.z) - e.z) <= 2 + pay &&
-    Math.floor(p.y) >= e.y - 1 && Math.floor(p.y) <= e.y + 3
+  const x = Math.floor(p.x)
+  const y = Math.floor(p.y)
+  const z = Math.floor(p.z)
+  const koylu = e.tur === 'koylu'
+  if (koylu && x === e.x && z === e.z + 3 && y === e.y - 1) return true // kapı önündeki basamak
+  return Math.abs(x - e.x) <= 2 + pay && Math.abs(z - e.z) <= 2 + pay &&
+    y >= e.y - 1 && y <= e.y + (koylu ? 4 : 3)
 }
 
 // Bu konumdaki blok bir evimizin parçası mı? (kırılmasın)
 function korunuyorMu(p) {
   for (const e of hepsi()) if (evinde(p, e)) return true
   return false
+}
+
+// Yeni ev için seçilen yer (orta noktası m) başka bir evimize çok yakın mı?
+// 8 blok: iki ev arasında yürüme payı ve kapı önü boş kalsın
+function yakindaEvVar(m, mesafe = 8) {
+  return hepsi().some((e) => Math.max(Math.abs(e.x - m.x), Math.abs(e.z - m.z)) < mesafe && Math.abs(e.y - m.y) <= 6)
 }
 
 // Bot şu an bir evimizin içinde mi? (duvarların içi: ortanın ±1 yanı)
@@ -67,4 +80,4 @@ function kapilardanGec(hareket) {
   return hareket
 }
 
-module.exports = { hepsi, ekle, korunuyorMu, icindekiEv, kanca, kapilardanGec, GECILIR_KAPI }
+module.exports = { hepsi, ekle, yakindaEvVar, korunuyorMu, icindekiEv, kanca, kapilardanGec, GECILIR_KAPI }

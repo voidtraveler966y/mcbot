@@ -5,6 +5,7 @@ const { gelisimKur } = require('./gelisim')
 const { gelisim2Kur } = require('./gelisim2')
 const { komutlarKur } = require('./komutlar')
 const { evKur } = require('./ev')
+const { koyluKur } = require('./koylu')
 const harita = require('./harita')
 const guncelleme = require('./guncelleme')
 const evler = require('./evler')
@@ -60,13 +61,16 @@ const TEKRAR_BAGLANMA_SN = 15
 //   !yap eşya [adet]  -> üretir (gerekirse çalışma masası koyar). Örnek: !yap mesale 8, !yap tas kazma
 //   !uyu              -> gece ise en yakın yatağa gidip uyur;  !uyu oto -> her gece kendisi uyusun (aç/kapa)
 //   !ev               -> yakındaki düz bir yere kendine 5x5 taş ev yapar (malzemeyi kendisi toplar)
+//   !koylu            -> klasik 5x5 köylü evi yapar: taş taban ve köşeler, tahta duvar, kütük kuşak,
+//                        çitli düz çatı, cam pencere; içinde masa, sandık, yatak, meşale.
+//                        Yatak için koyundan yün toplar (makas varsa kırkar, yoksa keser)
 // Hem genel sohbetten hem de /msg ile yazılanlar çalışır.
 
 const YARDIM = [
   '!gom, !egil, !kalk, !git x y z, !git x z',
   '!yaz mesaj, !spawn, !gel, !takip [isim], !vur [isim], !yumruk [isim], !dur, !konum, !durum',
   '!gelis (demir set), !gelis2 (elmas set), !envanter, !yardimet',
-  '!ver [isim] esya [adet], !sandik [hepsi|esya], !topla odun 32, !yap mesale 8, !uyu, !uyu oto, !ev',
+  '!ver [isim] esya [adet], !sandik [hepsi|esya], !topla odun 32, !yap mesale 8, !uyu, !uyu oto, !ev, !koylu',
 ]
 
 let otoUyku = false // !uyu oto: her gece kendiliğinden yatağa gitsin (yeniden bağlanınca da kalır)
@@ -311,6 +315,7 @@ async function baglan() {
   let gelisim2 = null // !gelis2 beyni (elmas set)
   let komutlar = null // !ver, !sandik, !topla, !yap, !uyu
   let evYapici = null // !ev
+  let koyluYapici = null // !koylu
   let calisanIs = '' // ölünce "tekrar denemek için ... yaz" diyebilmek için
 
   bot.loadPlugin(pathfinder)
@@ -344,6 +349,7 @@ async function baglan() {
     gelisim2 = gelisim2Kur(bot, gelisim.araclar)
     komutlar = komutlarKur(bot, gelisim.araclar)
     evYapici = evKur(bot, gelisim.araclar, komutlar, hareket)
+    koyluYapici = koyluKur(bot, gelisim.araclar, komutlar, hareket, evYapici)
   })
 
   // Evimizin içindeyken bir yere gidilecekse önce kapıyı aç
@@ -683,6 +689,16 @@ async function baglan() {
         }
         bot.setControlState('sneak', false)
         await isYap(cevap, () => evYapici.ev(cevap), null, 'Ev yapamadım: ', '!ev')
+        return
+
+      case '!koylu':
+      case '!koyluevi':
+        if (!koyluYapici) {
+          cevap('Daha dünyaya doğmadım, biraz bekle.')
+          return
+        }
+        bot.setControlState('sneak', false)
+        await isYap(cevap, () => koyluYapici.koylu(cevap), null, 'Köylü evi yapamadım: ', '!koylu')
         return
 
       case '!ver':
