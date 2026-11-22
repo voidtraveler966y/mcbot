@@ -47,6 +47,7 @@ let depo = kokPaket.repository
 if (!depo && process.env.GITHUB_REPOSITORY) depo = `github:${process.env.GITHUB_REPOSITORY}`
 const paket = { name: 'mcbot', private: true, version: kokPaket.version, main: 'android.js' }
 if (depo) paket.repository = depo
+if (kokPaket.homepage) paket.homepage = kokPaket.homepage // güncelleme bulununca açılacak web sitesi
 fs.writeFileSync(path.join(HEDEF, 'package.json'), JSON.stringify(paket, null, 2) + '\n')
 console.log(`Ortak dosyalar kopyalandı (${ortak.length} dosya), sürüm ${kokPaket.version}${depo ? ', depo ' + (depo.url || depo) : ''}`)
 
