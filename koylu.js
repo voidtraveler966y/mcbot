@@ -1,11 +1,12 @@
-// koylu.js — !koylu komutu: bot kendine eski (klasik) köylü evini yapar. Dışı 5x5, içi 3x3.
+// koylu.js — !ev koylu (ya da !koylu) komutu: bot kendine eski (klasik) köylü evini yapar. Dışı 5x5, içi 3x3.
 //   Taban ve köşe sütunları kırık taş, duvarlar tahta, üstte yatay kütük kuşak,
 //   düz tahta çatı ve çevresinde çit korkuluk. Üç duvarda cam pencere, ön duvarda kapı,
 //   kapının önünde tahta merdiven basamağı.
 //   İçeride: çalışma masası, sandık, yatak ve meşale.
 // Malzemeyi kendisi toplar: ~45 taş, ~45 kütük, 6 kum (cam için), 3 yün (yatak için).
+// Çit, kapı, merdiven, sandık, yatak, cam panel, meşale ve masayı kendisi yapmaz: !yardimet ile yardım ister.
 // Yün için koyun arar: makası varsa kırkar, yoksa keser.
-// Yarıda kalırsa (!dur, ölüm, bağlantı kopması) tekrar !koylu yazınca kaldığı yerden tamamlar.
+// Yarıda kalırsa (!dur, ölüm, bağlantı kopması) tekrar !ev koylu yazınca kaldığı yerden tamamlar.
 //
 // Yan kesit (güneyden bakış; m = içerideki zemin hizasında evin ortası, y=0):
 //   y=4   ç ç ç ç ç       ç = çit korkuluk
@@ -277,72 +278,18 @@ function koyluKur(bot, a, komutlar, anaHareket, ev) {
   }
 
   // ------------------------------------------------------------------ üretim
-  // Ağaç türüne bağlı eşyalar (çit, kapı, merdiven) aynı ağacın tahtasından olmalı.
-  // Elde en çok hangi ağaç varsa onu dener; tahtası yetmezse o ağacın kütüğünü tahtaya çevirir.
-  function agacTurleri() {
-    const deger = {}
-    for (const it of bot.inventory.items()) {
-      let tur = null
-      let kat = 1
-      if (it.name.endsWith('_planks')) tur = it.name.replace('_planks', '')
-      else if (kutukVar(it.name)) { tur = it.name.replace('_log', ''); kat = 4 }
-      if (tur) deger[tur] = (deger[tur] || 0) + it.count * kat
-    }
-    return Object.entries(deger).sort((x, y) => y[1] - x[1]).map(([t]) => t)
-  }
-
-  // tahtaGerek: bu iş için toplam kaç tahta lazım (aynı ağaçtan)
-  async function agactanUret(ek, adet, tahtaGerek, masa, ad) {
-    for (const tur of agacTurleri()) {
-      const esya = tur + ek
-      if (!reg().itemsByName[esya]) continue
-      const tahta = tur + '_planks'
-      while (a.say(tahta) < tahtaGerek && a.varMi(tur + '_log')) await a.uret(tahta, 4)
-      if (a.say(tahta) < tahtaGerek) continue
-      try {
-        await a.uret(esya, adet, masa.blok)
-        return
-      } catch (err) {
-        if (err instanceof Iptal) throw err
-        console.log(`[Köylü evi] ${esya} yapılamadı:`, err.message)
-      }
-    }
-    throw new Error(`${ad} için aynı ağaçtan ${tahtaGerek} tahta yok`)
-  }
-
-  // Tahta yakıtla fırında pişir (kömür varsa onu kullanır)
-  async function pisir(firin, girdi, adet, cikti) {
-    const pencere = await bot.openFurnace(firin.blok)
-    try {
-      const id = (isim) => reg().itemsByName[isim].id
-      await pencere.putInput(id(girdi), null, adet)
-      const yakitKoy = async () => {
-        for (const y of ['coal', 'charcoal']) {
-          if (a.say(y) > 0) { await pencere.putFuel(id(y), null, Math.min(a.say(y), Math.ceil(adet / 8))); return true }
-        }
-        const tahta = bot.inventory.items().find((i) => i.name.endsWith('_planks'))
-        if (!tahta) return false
-        await pencere.putFuel(tahta.type, null, Math.min(tahta.count, Math.ceil(adet / 1.5)))
-        return true
-      }
-      if (!(await yakitKoy())) throw new Error('fırına koyacak yakıt (kömür ya da tahta) yok')
-      let son = Date.now()
-      while (true) {
-        await a.bekle(40)
-        if (pencere.outputItem()) { await pencere.takeOutput(); son = Date.now() }
-        if (!pencere.inputItem() && !pencere.outputItem()) break
-        if (!pencere.fuelItem() && pencere.inputItem() && !(await yakitKoy())) break
-        if (Date.now() - son > 30000) break
-      }
-      if (pencere.inputItem()) await pencere.takeInput()
-      if (pencere.fuelItem()) await pencere.takeFuel()
-    } finally {
-      bot.closeWindow(pencere)
-    }
-    if (a.say(cikti) <= 0) throw new Error(`${cikti} pişiremedim`)
+  // Ağaç türüne göre tahta sayısı, en çok olandan başlayarak
+  function tahtaTurleri() {
+    const sayi = {}
+    for (const it of bot.inventory.items()) if (it.name.endsWith('_planks')) sayi[it.name] = (sayi[it.name] || 0) + it.count
+    return Object.entries(sayi).sort((x, y) => y[1] - x[1])
   }
 
   // ------------------------------------------------------------------ malzeme
+  // Bot hammaddeyi (taş, kütük, yün, kum) kendisi toplar ve duvar için kütüğü tahtaya çevirir.
+  // Çalışma masası ya da fırın isteyen eşyaları (çit, kapı, merdiven, sandık, yatak, cam panel,
+  // meşale, masa) kendisi YAPMAZ: "Biri bana yardım edebilir mi?" diye sorar, !yardimet yazan
+  // oyuncuya malzemeyi atar, yapılanları geri toplar.
   async function malzemeHazirla(cevap, e) {
     const kapiLazim = e.kapi && !sayFiltre((n) => kapiAdlari().includes(n))
     const merdivenLazim = e.basamak && !sayFiltre((n) => n.endsWith('_stairs'))
@@ -350,17 +297,16 @@ function koyluKur(bot, a, komutlar, anaHareket, ev) {
     const yatakLazim = e.yatak && !sayFiltre((n) => n.endsWith('_bed'))
     const komurVar = () => a.varMi('coal') || a.varMi('charcoal')
     const mesaleLazim = e.mesale && !a.varMi('torch')
+    const masaLazim = e.masa && !a.varMi('crafting_table')
     const citVar = sayFiltre((n) => citAdlari().includes(n))
     const citTur = Math.max(0, Math.ceil((e.cit - citVar) / 3)) // 1 üretim = 3 çit
     let camLazim = e.pencere > a.say('glass_pane')
     const kumGerek = camLazim ? Math.max(0, 6 - a.say('glass') - a.say('sand')) : 0
-    const firinLazim = camLazim || (mesaleLazim && !komurVar())
 
-    // 1) taş: taban + köşe sütunları (+ fırın yoksa 8)
-    const tasGerek = e.tas + (firinLazim && !a.varMi('furnace') ? 8 : 0)
-    if (a.say(DUVAR_TASI) < tasGerek) {
-      cevap(`Taban ve köşeler için ${tasGerek - a.say(DUVAR_TASI)} taş eksik, topluyorum.`)
-      await komutlar.topla(['tas', String(tasGerek - a.say(DUVAR_TASI) + 2)], cevap)
+    // 1) taş: taban + köşe sütunları
+    if (a.say(DUVAR_TASI) < e.tas) {
+      cevap(`Taban ve köşeler için ${e.tas - a.say(DUVAR_TASI)} taş eksik, topluyorum.`)
+      await komutlar.topla(['tas', String(e.tas - a.say(DUVAR_TASI) + 2)], cevap)
       a.baslat(cevap)
     }
 
@@ -377,23 +323,22 @@ function koyluKur(bot, a, komutlar, anaHareket, ev) {
         await komutlar.topla(['kum', String(kumGerek)], cevap)
       } catch (err) {
         if (err instanceof Iptal) throw err
-        cevap(`Kum bulamadım (${err.message}). Pencereler boş kalacak; kum getirirsen !koylu yaz, tamamlarım.`)
+        cevap(`Kum bulamadım (${err.message}). Pencereler boş kalacak; kum getirirsen !ev koylu yaz, tamamlarım.`)
         camLazim = false
       }
       a.baslat(cevap)
     }
 
-    // 4) odun: kuşak kütükleri + tahta işleri
+    // 4) odun: duvar/çatı tahtası + kuşak kütükleri + yardımcıya verilecek tahta
+    const yatakYapilacak = yatakLazim && enCokYun().adet >= YUN_GEREK
     const cubukGerek = citTur * 2 + (mesaleLazim ? 1 : 0)
-    const tahtaGerek = e.duvarTahta + (kapiLazim ? 6 : 0) + (sandikLazim ? 8 : 0) + (yatakLazim ? 3 : 0) +
-      (merdivenLazim ? 6 : 0) + citTur * 4 + Math.ceil(cubukGerek / 4) * 2 +
-      (a.varMi('crafting_table') ? 0 : (e.masa ? 8 : 4)) + // çalışırken kullanılan + eve konan masa
-      (camLazim && !komurVar() ? 4 : 0) + (mesaleLazim && !komurVar() ? 2 : 0) +
-      (citTur || kapiLazim || merdivenLazim ? 4 : 0) // pay: karışık ağaçta aynı türden tahta için
-    const kutukGerek = e.kutuk + (mesaleLazim && !komurVar() ? 1 : 0)
+    const yardimTahta = (kapiLazim ? 6 : 0) + (merdivenLazim ? 6 : 0) + (sandikLazim ? 8 : 0) +
+      (yatakYapilacak ? 3 : 0) + (masaLazim ? 4 : 0) + citTur * 4 + Math.ceil(cubukGerek / 4) * 2
+    const tahtaGerek = e.duvarTahta + yardimTahta
+    const kutukGerek = e.kutuk + (mesaleLazim && !komurVar() ? 1 : 0) // kömür yoksa yardımcı odun kömürü yapsın
     const eksikKutuk = kutukGerek + Math.ceil(Math.max(0, tahtaGerek - a.tahtaSay()) / 4) - a.kutukSay()
     if (eksikKutuk > 0) {
-      cevap(`Duvar, çatı, çit ve kütük kuşak için ${eksikKutuk} kütük lazım, topluyorum.`)
+      cevap(`Duvar, çatı ve kütük kuşak için ${eksikKutuk} kütük lazım, topluyorum.`)
       await komutlar.topla(['odun', String(eksikKutuk + 1)], cevap)
       a.baslat(cevap)
     }
@@ -402,74 +347,59 @@ function koyluKur(bot, a, komutlar, anaHareket, ev) {
       await a.uret(kutuk.name.replace('_log', '_planks'), 4)
     }
 
-    // 5) fırın işleri: kum -> cam, kömür yoksa 1 kütük -> odun kömürü (meşale için)
-    if (camLazim && a.say('glass') < 6 && !(a.say('glass_pane') >= e.pencere)) {
-      cevap('Fırında cam yapıyorum.')
-      const firin = await a.firinHazirla()
-      try {
-        if (a.say('sand') > 0) await pisir(firin, 'sand', Math.min(a.say('sand'), 6 - a.say('glass')), 'glass')
-        if (mesaleLazim && !komurVar()) {
-          const kutuk = bot.inventory.items().find((i) => kutukVar(i.name))
-          if (kutuk) await pisir(firin, kutuk.name, 1, 'charcoal')
-        }
-      } finally {
-        await a.geriTopla(firin)
-      }
-    } else if (mesaleLazim && !komurVar()) {
-      const kutuk = bot.inventory.items().find((i) => kutukVar(i.name))
-      if (kutuk) {
-        cevap('Meşale için odun kömürü yapıyorum.')
-        const firin = await a.firinHazirla()
-        try {
-          await pisir(firin, kutuk.name, 1, 'charcoal')
-        } finally {
-          await a.geriTopla(firin)
-        }
+    // 5) eşyaları yardımcı yapsın
+    const istenen = []
+    const ver = []
+    if (citTur > 0) istenen.push({ ad: 'çit', adet: e.cit, eslesir: (n) => citAdlari().includes(n) })
+    if (kapiLazim) istenen.push({ ad: 'tahta kapı', adet: 1, eslesir: (n) => kapiAdlari().includes(n) })
+    if (merdivenLazim) istenen.push({ ad: 'merdiven', adet: 1, eslesir: (n) => n.endsWith('_stairs') })
+    if (sandikLazim) istenen.push({ ad: 'sandık', adet: 1, eslesir: (n) => n === 'chest' })
+    if (yatakYapilacak) {
+      istenen.push({ ad: 'yatak', adet: 1, eslesir: (n) => n.endsWith('_bed') })
+      ver.push([`${enCokYun().renk}_wool`, YUN_GEREK])
+    }
+    if (camLazim && a.say('glass') + a.say('sand') >= 6) {
+      istenen.push({ ad: 'cam panel', adet: e.pencere, eslesir: (n) => n === 'glass_pane' })
+      const cam = Math.min(a.say('glass'), 6)
+      if (cam) ver.push(['glass', cam])
+      if (cam < 6) ver.push(['sand', 6 - cam])
+    }
+    if (mesaleLazim) {
+      istenen.push({ ad: 'meşale', adet: 1, eslesir: (n) => n === 'torch' })
+      const komur = ['coal', 'charcoal'].find((k) => a.varMi(k))
+      if (komur) ver.push([komur, 1])
+      else {
+        const kutuk = bot.inventory.items().find((i) => kutukVar(i.name))
+        if (kutuk) ver.push([kutuk.name, 1]) // odun kömürü için
       }
     }
+    if (masaLazim) istenen.push({ ad: 'çalışma masası', adet: 1, eslesir: (n) => n === 'crafting_table' })
 
-    // 6) çalışma masasında: çubuk, çit, kapı, merdiven, sandık, yatak, cam panel, meşale, masa
-    const yatakYapilacak = yatakLazim && enCokYun().adet >= YUN_GEREK
-    const panelYapilacak = camLazim && a.say('glass_pane') < e.pencere && a.say('glass') >= 6
-    const mesaleYapilacak = mesaleLazim && komurVar()
-    const masaIsi = citTur > 0 || kapiLazim || merdivenLazim || sandikLazim || yatakYapilacak || panelYapilacak || mesaleYapilacak
-    if (cubukGerek > a.say('stick')) await a.cubukYap(cubukGerek)
-    if (masaIsi) {
-      cevap('Eşyaları yapıyorum: çit, kapı, merdiven, sandık, yatak, pencere, meşale.')
-      const masa = await a.masaHazirla()
-      try {
-        if (citTur > 0) await agactanUret('_fence', citTur * 3, citTur * 4, masa, 'çit')
-        if (kapiLazim) await agactanUret('_door', 1, 6, masa, 'kapı')
-        if (merdivenLazim) await agactanUret('_stairs', 1, 6, masa, 'merdiven')
-        if (sandikLazim) await a.uret('chest', 1, masa.blok)
-        if (yatakYapilacak) await a.uret(`${enCokYun().renk}_bed`, 1, masa.blok)
-        if (panelYapilacak) await a.uret('glass_pane', 16, masa.blok)
-        if (mesaleYapilacak) {
-          if (!a.varMi('stick')) await a.cubukYap(1)
-          await a.uret('torch', 4, masa.blok)
-        }
-      } finally {
-        await a.geriTopla(masa)
-      }
+    if (istenen.length) {
+      // Yardımdan hemen önce tahtayı yeniden say: eksikse kütük çevir ya da odun topla
+      // (ilk denemede bot yünü ve kumu atıp tahtayı atmamıştı)
+      console.log(`[Köylü evi] yardım öncesi: tahta ${a.tahtaSay()}, kütük ${a.kutukSay()}, duvar tahtası ${e.duvarTahta}, yardım tahtası ${yardimTahta}, ayrılan kütük ${kutukGerek}`)
+      await ev.tahtaHazirla(e.duvarTahta + yardimTahta, kutukGerek, cevap, 'Köylü evi')
+      // Tahtayı en çok olan ağaç türünden ver (çit, kapı, merdiven aynı tür tahta ister); duvar tahtası
+      // ve kuşak kütükleri bende kalsın. Tahta yine yetmezse eksiği kütük olarak verilir.
+      ver.unshift(...ev.tahtaListesi(yardimTahta, e.duvarTahta, kutukGerek))
+      console.log(`[Köylü evi] yardımcıya verilecek: ${ev.listeYazi(ver)}`)
+      await a.yardimIste(istenen, ver, cevap, 'Biri bana yardım edebilir mi? Köylü evi için şunlar lazım:')
+      a.baslat(cevap)
     }
-    // eve konacak masa (yakındaki masa kullanıldıysa elimizde olmayabilir)
-    if (e.masa && !a.varMi('crafting_table')) await a.uret('crafting_table', 1)
 
-    // 7) son kontrol: duvar tahtası ve kuşak kütükleri
+    // 6) son kontrol: duvar tahtası ve kuşak kütükleri
     if (a.kutukSay() < e.kutuk) {
       cevap(`Kütük kuşağı için ${e.kutuk - a.kutukSay()} kütük daha lazım, topluyorum.`)
       await komutlar.topla(['odun', String(e.kutuk - a.kutukSay())], cevap)
       a.baslat(cevap)
     }
-    while (a.tahtaSay() < e.duvarTahta && a.kutukSay() > e.kutuk) {
-      const kutuk = bot.inventory.items().find((i) => kutukVar(i.name))
-      await a.uret(kutuk.name.replace('_log', '_planks'), 4)
-    }
+    if (a.tahtaSay() < e.duvarTahta) await ev.tahtaHazirla(e.duvarTahta, e.kutuk, cevap, 'Duvar ve çatı')
     if (a.say(DUVAR_TASI) < e.tas) throw new Error('taban için yeterli taş toplayamadım')
     if (a.tahtaSay() < e.duvarTahta) throw new Error('duvar ve çatı için yeterli tahta yok')
     if (a.kutukSay() < e.kutuk) throw new Error('kütük kuşağı için yeterli kütük yok')
-    if (sayFiltre((n) => citAdlari().includes(n)) < e.cit) throw new Error('korkuluk için yeterli çit yapamadım')
-    if (yatakLazim && !sayFiltre((n) => n.endsWith('_bed'))) cevap('Yatak yapamadım, evi yataksız yapıyorum.')
+    if (sayFiltre((n) => citAdlari().includes(n)) < e.cit) throw new Error('korkuluk için yeterli çit yok')
+    if (yatakLazim && !sayFiltre((n) => n.endsWith('_bed'))) cevap('Yatak için yeterli yün bulamadım, evi yataksız yapıyorum.')
   }
 
   // ------------------------------------------------------------------ inşaat
@@ -571,7 +501,7 @@ function koyluKur(bot, a, komutlar, anaHareket, ev) {
     if (son.mesale) eksikYazi.push('meşale')
     if (son.sandik) eksikYazi.push('sandık')
     cevap(`Köylü evim hazır! Konum: ${m.x} ${m.y - 1} ${m.z}. Gelmek için: !git ${m.x} ${m.y - 1} ${m.z + 4}` +
-      (eksikYazi.length ? ` (Eksik: ${eksikYazi.join(', ')}. Malzeme bulunca !koylu yaz, tamamlarım.)` : ''))
+      (eksikYazi.length ? ` (Eksik: ${eksikYazi.join(', ')}. Malzeme bulunca !ev koylu yaz, tamamlarım.)` : ''))
     return m
   }
 

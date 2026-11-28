@@ -7,6 +7,8 @@ const { komutlarKur } = require('./komutlar')
 const { evKur } = require('./ev')
 const { koyluKur } = require('./koylu')
 const harita = require('./harita')
+const kopya = require('./kopya')
+const lan = require('./lan')
 const guncelleme = require('./guncelleme')
 const evler = require('./evler')
 const ayarlar = require('./ayarlar')
@@ -35,12 +37,14 @@ const TEKRAR_BAGLANMA_SN = 15
 
 // Komutlar (Türkçe harfle de yazılabilir: !göm, !eğil, !yardım ...):
 //   !yardim           -> komut listesini yazar
-//   !gom              -> kaz ve üstünü kapat
+//   !gom              -> kaz ve üstünü kapat (kopyalar da gömülür; !gom isim -> sadece o bot)
 //   !egil / !kalk     -> eğil / ayağa kalk
 //   !git x y z        -> o koordinata yürü (y'siz hali: !git x z)
 //   !gel              -> komutu yazanın yanına gel
 //   !takip            -> komutu yazanı takip et (!dur diyene kadar)
 //   !takip isim       -> o oyuncuyu takip et
+//   !koru [isim]      -> seni (ya da o oyuncuyu) korur: yanından ayrılmaz, 10 blok içine gelen
+//                        canavarlara saldırır (enderman, domuz adam gibi tarafsızlara dokunmaz). !koru kapat / !dur bırakır
 //   !vur isim         -> o oyuncuya elindekiyle vur (isim yoksa en yakın yaratığa)
 //   !yumruk isim      -> aynısı; envanterde kılıç varsa en iyisini alıp onla, yoksa yumrukla
 //   !dur              -> ne yapıyorsa bıraksın
@@ -60,18 +64,157 @@ const TEKRAR_BAGLANMA_SN = 15
 //   !topla malzeme [adet] -> odun, tas, komur, demir, bakir, altin, toprak, kum, cakil (varsayılan 16)
 //   !yap eşya [adet]  -> üretir (gerekirse çalışma masası koyar). Örnek: !yap mesale 8, !yap tas kazma
 //   !uyu              -> gece ise en yakın yatağa gidip uyur;  !uyu oto -> her gece kendisi uyusun (aç/kapa)
-//   !ev               -> yakındaki düz bir yere kendine 5x5 taş ev yapar (malzemeyi kendisi toplar)
+//   !ev               -> yakındaki düz bir yere kendine 5x5 taş ev yapar (taş ve odunu kendisi toplar;
+//                        kapı, masa, meşale için !yardimet ile yardım ister)
 //   !koylu            -> klasik 5x5 köylü evi yapar: taş taban ve köşeler, tahta duvar, kütük kuşak,
 //                        çitli düz çatı, cam pencere; içinde masa, sandık, yatak, meşale.
-//                        Yatak için koyundan yün toplar (makas varsa kırkar, yoksa keser)
+//                        Yatak için koyundan yün toplar (makas varsa kırkar, yoksa keser). !ev koylu da olur
+//   !eve git [koylu|tas] -> en yakın evine yürür, içeri girer; gece ise evdeki yatakta uyur
+//   !esyalarim        -> öldüğü yere gidip düşen eşyalarını toplar, zırhını giyer (eşyalar 5 dk'da kaybolur)
+//   !balik [adet]     -> yakındaki suda oltayla balık tutar (olta yoksa birinin vermesi gerekir)
+//   !kaydet ad / !git ad / !noktalar / !sil ad -> kayıtlı noktalar (sunucuya göre ayrı saklanır)
+//   !sessiz           -> cevapları sohbete değil komutu yazana fısıldar (aç/kapa)
+//   Kısa komutlar: !g gel, !t takip, !k koru, !d dur, !s durum, !eg eve git, !ey esyalarim, !b balik ...
+//   Yanlış yazılan komuta en yakın komutu önerir (!gle -> "!gel mi demek istedin?").
+//   Kendiliğinden: acıkınca yer (iş yaparken açlık 6'nın altına inince), daha iyi zırh alınca giyer.
+//   !kopya [adet]     -> 1-5 AFK kopya bot açar (sadece !gom'a tepki verirler); !kopya kapat -> çıkarır.
+//                        Sunucuda sahip kalmayınca kopyalar kendiliğinden çıkar (bkz. kopya.js)
 // Hem genel sohbetten hem de /msg ile yazılanlar çalışır.
 
 const YARDIM = [
-  '!gom, !egil, !kalk, !git x y z, !git x z',
-  '!yaz mesaj, !spawn, !gel, !takip [isim], !vur [isim], !yumruk [isim], !dur, !konum, !durum',
+  '!gom [isim], !egil, !kalk, !git x y z, !git x z, !kopya [adet|kapat]',
+  '!yaz mesaj, !spawn, !gel, !takip [isim], !koru [isim|kapat], !vur [isim], !yumruk [isim], !dur, !konum, !durum',
   '!gelis (demir set), !gelis2 (elmas set), !envanter, !yardimet',
-  '!ver [isim] esya [adet], !sandik [hepsi|esya], !topla odun 32, !yap mesale 8, !uyu, !uyu oto, !ev, !koylu',
+  '!ver [isim] esya [adet], !sandik [hepsi|esya], !topla odun 32, !yap mesale 8, !uyu, !uyu oto, !ev, !ev koylu',
+  '!eve git [koylu|tas], !esyalarim (ölünce eşyalarını toplar), !balik [adet]',
+  '!kaydet ad, !git ad, !noktalar, !sil ad, !sessiz (cevapları fısıldar)',
+  'Kısa: !g gel, !t takip, !k koru, !d dur, !s durum, !eg eve git, !ey esyalarim, !b balik',
 ]
+
+// !yardim komut -> o komutun kısa açıklaması (anahtar: ! işaretsiz, Türkçe harfsiz komut adı)
+const YARDIM_AYRINTI = {
+  yardim: '!yardim: komut listesini yazar. !yardim komut -> o komutun ne yaptığını anlatır (ör. !yardim koru).',
+  gom: '!gom: bot olduğu yeri kazıp içine girer ve üstünü kapatır. Kopyalar da gömülür. !gom Ad_K2 / !gom k2 / !gom 2 -> sadece o bot.',
+  egil: '!egil: bot eğilir. !kalk yazınca kalkar.',
+  kalk: '!kalk: eğilen bot ayağa kalkar.',
+  git: '!git x y z: o koordinata yürür. Yüksekliği bilmiyorsan !git x z de olur.',
+  gel: '!gel: komutu yazanın yanına gelir.',
+  takip: '!takip: seni takip eder, !dur diyene kadar. !takip isim -> o oyuncuyu takip eder.',
+  koru: '!koru: seni takip eder, 10 blok içine gelen canavarlara saldırır, acıkınca yer. !koru isim -> o oyuncuyu korur. !koru kapat ya da !dur bırakır.',
+  vur: '!vur isim: o oyuncuya elindekiyle vurur. İsim yoksa en yakın yaratığa vurur. !dur bırakır.',
+  yumruk: '!yumruk isim: !vur gibi, ama envanterde kılıç varsa en iyisini eline alır.',
+  dur: '!dur: ne yapıyorsa (iş, takip, koruma, saldırı) bırakır.',
+  konum: '!konum: koordinatlarını söyler.',
+  durum: '!durum: canını, açlığını ve şu an ne yaptığını söyler.',
+  spawn: '!spawn (ya da !yatak): en yakın yatağa gidip tıklar, doğma noktası orası olur.',
+  yatak: '!yatak: !spawn ile aynı; en yakın yatağı doğma noktası yapar.',
+  yaz: '!yaz mesaj: bot o mesajı sohbete yazar.',
+  gelis: '!gelis: kendi kendine gelişir: odun, taş, kömür, demir toplar; sonunda full demir zırh ve demir aletler. Demir aletler için !yardimet ile yardım isteyebilir.',
+  gelis2: '!gelis2: demir seti tamamsa derine inip elmas arar, elmas set yapmaya çalışır.',
+  envanter: '!envanter: üstünde ne olduğunu söyler.',
+  yardimet: '!yardimet: bot "Biri bana yardım edebilir mi?" deyince yaz. Yanına gelir, malzemeyi atar; istediği eşyaları yapıp Q ile geri at. Sahip olmayanlar da yazabilir.',
+  ver: '!ver [isim] eşya [adet|hepsi]: eşyayı sana (ya da o oyuncuya) atar. Örnek: !ver demir 10',
+  sandik: '!sandik: en yakın sandığa gereksiz eşyaları koyar. !sandik hepsi -> alet ve zırh dışında her şeyi; !sandik eşya -> sadece o eşyayı.',
+  topla: '!topla malzeme [adet]: odun, tas, komur, demir, bakir, altin, toprak, kum, cakil toplar (adet yazmazsan 16). Örnek: !topla odun 32',
+  yap: '!yap eşya [adet]: üretir, gerekirse çalışma masası koyar. Örnek: !yap mesale 8, !yap tas kazma',
+  uyu: '!uyu: gece ise en yakın yatakta uyur. !uyu oto -> her gece kendisi uyusun (aç/kapa).',
+  ev: '!ev: yakına 5x5 taş ev yapar; taşı ve odunu kendisi toplar, kapı/masa/meşale için !yardimet ile yardım ister. !ev koylu -> köylü evi.',
+  koylu: '!ev koylu: klasik köylü evi yapar (taş taban, tahta duvar, kütük kuşak, çitli çatı). Çit, kapı, yatak gibi eşyalar için !yardimet ile yardım ister.',
+  eve: '!eve git: en yakın evine yürür, içeri girer, gece ise yatağında uyur. !eve git koylu / !eve git tas -> o evine.',
+  esyalarim: '!esyalarim: öldüğü yere gidip yere düşen eşyalarını toplar, zırhını giyer. Eşyalar 5 dakikada kaybolur, çabuk ol.',
+  kaydet: '!kaydet ad: bulunduğu yeri o adla kaydeder (ör. !kaydet maden). Sonra !git maden ile oraya gider. Aynı adla tekrar kaydedersen yeri güncellenir.',
+  noktalar: '!noktalar: kayıtlı noktaları ve koordinatlarını sayar. Panelde de düğme olarak görünürler.',
+  sil: '!sil ad: o kayıtlı noktayı siler.',
+  sessiz: '!sessiz: bot sohbete yazmak yerine cevaplarını komutu yazana fısıldar (bir daha yazınca kapanır). Yardım isteği yine herkese yazılır.',
+  balik: '!balik [adet]: yakındaki suya gidip oltayla balık tutar (adet yazmazsan 10). Olta yoksa birinin ona olta atması gerekir.',
+  kopya: '!kopya [1-5]: AFK kopya botlar açar (sadece !gom\'a tepki verirler). !kopya kapat -> çıkarır. Sadece offline sunucularda çalışır.',
+}
+// Bazı yazılışlar aynı komuta gitsin
+const YARDIM_ESANLAMLI = { koylu: 'koylu', evegit: 'eve', esyalarimi: 'esyalarim', gom: 'gom', kopyalar: 'kopya',
+  g: 'gel', t: 'takip', k: 'koru', d: 'dur', s: 'durum', eg: 'eve', ey: 'esyalarim', b: 'balik', u: 'uyu', nokta: 'noktalar' }
+
+// Panelde "Şu an" satırı için iş adları (komutun ilk bir-iki kelimesine göre)
+const IS_ADLARI = {
+  '!gelis': 'Demir set (gelişim)', '!gelis2': 'Elmas set', '!ev': 'Taş ev yapıyor', '!ev koylu': 'Köylü evi yapıyor',
+  '!koylu': 'Köylü evi yapıyor', '!topla': 'Topluyor', '!yap': 'Üretiyor', '!ver': 'Eşya veriyor',
+  '!sandik': 'Sandığa koyuyor', '!uyu': 'Uyumaya gidiyor', '!eve git': 'Eve gidiyor', '!eve': 'Eve gidiyor',
+  '!evegit': 'Eve gidiyor', '!esyalarim': 'Eşyalarını topluyor', '!esyalarimi': 'Eşyalarını topluyor',
+  '!gom': 'Gömülüyor', '!gel': 'Yanına geliyor', '!git': 'Yolda', '!spawn': 'Doğma noktası ayarlıyor',
+  '!yatak': 'Doğma noktası ayarlıyor', '!balik': 'Balık tutuyor',
+}
+
+// Kısa komutlar: sohbette kısası yazılınca uzunu çalışır (!g -> !gel)
+const KISALTMA = {
+  '!g': '!gel', '!t': '!takip', '!k': '!koru', '!d': '!dur', '!s': '!durum', '!kn': '!konum',
+  '!eg': '!eve git', '!ey': '!esyalarim', '!u': '!uyu', '!b': '!balik', '!tp': '!topla',
+  '!env': '!envanter', '!inv': '!envanter', '!h': '!yardim', '!help': '!yardim', '!n': '!noktalar',
+}
+// Yazım hatası önerisi için bilinen komutlar
+const KOMUT_LISTESI = ['!yardim', '!gom', '!egil', '!kalk', '!git', '!gel', '!takip', '!koru', '!vur', '!yumruk',
+  '!dur', '!konum', '!durum', '!spawn', '!yatak', '!yaz', '!gelis', '!gelis2', '!envanter', '!yardimet', '!ver',
+  '!sandik', '!topla', '!yap', '!uyu', '!ev', '!koylu', '!eve', '!esyalarim', '!kopya', '!kaydet', '!noktalar',
+  '!sil', '!sessiz', '!balik']
+// İki kelime arasındaki harf farkı (eksik, fazla, yanlış ya da yer değiştirmiş harf sayısı)
+function harfFarki(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i])
+  for (let j = 1; j <= b.length; j++) d[0][j] = j
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1))
+      // yer değiştiren iki harf tek hata sayılır (!gle -> !gel)
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1)
+    }
+  }
+  return d[a.length][b.length]
+}
+// Yanlış yazılan komuta en yakın komut (yeterince yakın değilse null: başka eklentilerin komutlarına karışmasın)
+function komutOner(yazilan) {
+  let enIyi = null
+  let enAz = Infinity
+  for (const k of KOMUT_LISTESI) {
+    if (k[1] !== yazilan[1]) continue // ilk harf genelde doğru yazılır; !home gibi başka komutlara karışmasın
+    const f = harfFarki(yazilan, k)
+    // eşitlikte daha uzun olanı seç: harf eksik yazmak daha sık (!balk -> !balik, !kalk değil)
+    if (f < enAz || (f === enAz && k.length > enIyi.length)) { enAz = f; enIyi = k }
+  }
+  const sinir = yazilan.length <= 4 ? 1 : 2
+  return enAz <= sinir ? enIyi : null
+}
+
+// ---------------------------------------------------------------- kayıtlı noktalar
+// ayarlar.json'da "noktalar": [{ sunucu, ad, x, y, z, boyut }] (evler gibi sunucuya göre ayrı)
+const NOKTA_ADI = /^[a-z0-9_-]{1,20}$/
+function noktalar() {
+  const a = ayarlar.oku()
+  return (Array.isArray(a.noktalar) ? a.noktalar : []).filter((n) => n.sunucu === a.host)
+}
+function noktaBul(ad) {
+  return noktalar().find((n) => n.ad === ad) || null
+}
+function noktaKaydet(ad, p, boyut) {
+  const a = ayarlar.oku()
+  const liste = (Array.isArray(a.noktalar) ? a.noktalar : []).filter((n) => !(n.sunucu === a.host && n.ad === ad))
+  liste.push({ sunucu: a.host, ad, x: Math.floor(p.x), y: Math.floor(p.y), z: Math.floor(p.z), boyut: boyut || null })
+  ayarlar.yaz({ ...a, noktalar: liste })
+}
+function noktaSil(ad) {
+  const a = ayarlar.oku()
+  const liste = Array.isArray(a.noktalar) ? a.noktalar : []
+  const kalan = liste.filter((n) => !(n.sunucu === a.host && n.ad === ad))
+  if (kalan.length === liste.length) return false
+  ayarlar.yaz({ ...a, noktalar: kalan })
+  return true
+}
+
+// ---------------------------------------------------------------- panel bildirimleri
+// Panel her saniye son bildirimleri alır; yenilerini ses ve masaüstü bildirimiyle gösterir.
+const BILDIRIMLER = []
+let bildirimNo = 0
+function bildirimEkle(tur, metin) {
+  BILDIRIMLER.push({ no: ++bildirimNo, tur, metin, zaman: Date.now() })
+  if (BILDIRIMLER.length > 30) BILDIRIMLER.shift()
+  console.log(`[Bildirim] ${metin}`)
+}
 
 let otoUyku = false // !uyu oto: her gece kendiliğinden yatağa gitsin (yeniden bağlanınca da kalır)
 
@@ -122,6 +265,8 @@ let baglanilanSunucu = ''
 let baslatiliyor = false
 let sonHata = '' // panelde kırmızı kutuda gösterilir; oyuna girince silinir
 let msaKod = null // Microsoft girişi için kullanıcının gireceği kod { kod, adres, bitis }
+let panelKomut = null // paneldeki komut düğmeleri için: (sahip, metin) => komutu çalıştırır
+let etkinlikAl = null // panelde "Şu an": bot ne yapıyor { ad, adim, sayi, toplam, sure }
 
 // Bağlantı hatalarını herkesin anlayacağı Türkçeye çevir
 function hataCevir(e) {
@@ -162,6 +307,11 @@ function atilmaCevir(sebep) {
   if (k.includes('whitelist') || k.includes('white-list') || k.includes('not_whitelisted')) return 'Sunucunun beyaz listesinde (whitelist) değilsiniz. Sunucu sahibi botu listeye eklemeli.'
   if (k.includes('outdated') || k.includes('incompatible')) return 'Sürüm uyuşmuyor. Panelden sürümü düzeltin ya da boş bırakın (otomatik).'
   if (k.includes('unverified_username') || k.includes('failed to verify') || k.includes('not authenticated') || k.includes('invalid session')) {
+    if (ayarlar.oku().tur === 'lan') {
+      return 'Bu LAN dünyası gerçek bir Microsoft hesabı istiyor (normal Minecraft LAN dünyaları hesabı doğrular). ' +
+        'Ya panelden giriş türünü "Microsoft hesabı" yapıp bot için satın alınmış ayrı bir hesap kullanın, ' +
+        'ya da dünyayı açan oyuncu LAN\'ı offline yapan bir mod kullansın (ör. LAN World Plug-n-Play, Custom LAN).'
+    }
     return 'Bu sunucu gerçek bir Microsoft hesabı istiyor. Panelden giriş türünü "Microsoft hesabı" yapın.'
   }
   if (k.includes('banned')) return 'Bu sunucudan yasaklanmışsınız: ' + metin
@@ -183,6 +333,7 @@ const kontrol = {
     calisiyor = false
     clearTimeout(zamanlayici)
     durumYazi = 'Durduruldu'
+    kopya.hepsiniKapat('Panelden durduruldu')
     if (aktifBot) aktifBot.quit('Panelden durduruldu')
     console.log('Bot panelden durduruldu.')
   },
@@ -203,6 +354,16 @@ const kontrol = {
     aktifBot.chat(metin)
     return true
   },
+  // Panelden komut: seçilen sahip sohbete yazmış gibi çalışır. Hata varsa açıklamasını döndürür.
+  komut(metin, kim) {
+    if (!aktifBot || !aktifBot.entity || !panelKomut) return 'Bot şu an oyunda değil.'
+    const sahipler = ayarlar.oku().sahipler
+    const ad = sahipler.find((s) => s.toLowerCase() === String(kim).toLowerCase()) || sahipler[0]
+    if (!ad) return 'Önce panelden bir sahip ekleyin.'
+    console.log(`[Panel] ${ad} adına komut: ${metin}`)
+    panelKomut(ad, metin).catch((e) => console.log('[Panel] komut hatası:', e.message))
+    return null
+  },
   durumAl() {
     const b = aktifBot
     const oyunda = Boolean(b && b.entity)
@@ -215,6 +376,9 @@ const kontrol = {
       guncelleme: guncelleme.bilgi(),
       msaKod: msaKod && msaKod.bitis > Date.now() ? msaKod : null,
       sunucu: baglanilanSunucu,
+      kopyalar: kopya.liste(),
+      is: oyunda && etkinlikAl ? etkinlikAl() : null,
+      bildirimler: BILDIRIMLER.slice(-15),
       bot: oyunda ? {
         isim: b.username,
         can: b.health,
@@ -287,7 +451,30 @@ async function baglan() {
       console.log(`Microsoft girişi: ${d.verification_uri} adresine gidip şu kodu girin: ${d.user_code}`)
     },
   }
-  if (!secenek.port) {
+  if (ayar.tur === 'lan') {
+    // LAN dünyası: port her "LAN'a Aç"ta değişir; güncelini ağdaki duyurulardan al
+    lan.dinle()
+    let dunya = lan.sec(ayar.host, ayar.lanAd)
+    for (let i = 0; !dunya && i < 8 && calisiyor; i++) { // duyurular 1,5 sn'de bir gelir
+      durumYazi = 'LAN dünyası aranıyor'
+      await new Promise((coz) => setTimeout(coz, 500))
+      dunya = lan.sec(ayar.host, ayar.lanAd)
+    }
+    if (!calisiyor) return
+    if (!dunya) {
+      sonHata = `LAN dünyası bulunamadı${ayar.lanAd ? ' (' + ayar.lanAd + ')' : ''}. Dünyayı açan oyunda Esc > "LAN'a Aç" deyin; ` +
+        'bot bulunca kendiliğinden bağlanır. Bot başka bir bilgisayardaysa ikisi aynı ağda (aynı modem/Wi-Fi) olmalı.'
+      console.log(sonHata)
+      tekrarPlanla()
+      return
+    }
+    secenek.host = dunya.host
+    secenek.port = dunya.port
+    if (dunya.host !== ayar.host || dunya.port !== ayar.port) {
+      ayarlar.yaz({ ...ayarlar.oku(), host: dunya.host, port: dunya.port }) // panelde güncel adres görünsün
+    }
+    baglanilanSunucu = `LAN: ${dunya.ad} (${dunya.host}:${dunya.port})`
+  } else if (!secenek.port) {
     durumYazi = 'Port aranıyor'
     const bulunan = await portBul(ayar.host)
     if (!calisiyor) return // bu arada panelden durduruldu
@@ -304,7 +491,7 @@ async function baglan() {
       return
     }
   }
-  baglanilanSunucu = `${ayar.host}${ayar.port ? '' : ' → ' + secenek.host}:${secenek.port}`
+  if (ayar.tur !== 'lan') baglanilanSunucu = `${ayar.host}${ayar.port ? '' : ' → ' + secenek.host}:${secenek.port}`
   console.log('Bağlanılıyor:', secenek.host + ':' + secenek.port, 'adı:', secenek.username)
   durumYazi = 'Bağlanıyor'
   const bot = mineflayer.createBot(secenek)
@@ -317,6 +504,10 @@ async function baglan() {
   let evYapici = null // !ev
   let koyluYapici = null // !koylu
   let calisanIs = '' // ölünce "tekrar denemek için ... yaz" diyebilmek için
+  let isDurumu = null // isYap'ın çalıştırdığı iş { ad, komut, adim, sayi, toplam, baslangic, cevap }
+  let sonKomut = '' // en son çalıştırılan komut metni (isYap iş adını buradan bulur)
+  let sonCanBildirimi = 0
+  let olumYeri = null // !esyalarim için: en son nerede öldü { konum, zaman, boyut }
 
   bot.loadPlugin(pathfinder)
 
@@ -335,6 +526,7 @@ async function baglan() {
   })
   bot.once('spawn', () => {
     console.log('Dünyada doğdu. Sunucu sürümü:', bot.version)
+    kopya.baglantiAyarla({ host: secenek.host, port: secenek.port, version: bot.version })
     const hareket = new Movements(bot)
     for (const blok of bot.registry.blocksArray) {
       if (KIRMA_YASAK(blok.name)) hareket.blocksCantBreak.add(blok.id)
@@ -411,11 +603,11 @@ async function baglan() {
           .filter((it) => it.name.endsWith(son))
           .sort((a, b) => MALZEME_SIRA.indexOf(a.name.split('_')[0]) - MALZEME_SIRA.indexOf(b.name.split('_')[0]))[0]
         if (!yedek) {
-          if (kirilan === yer) bot.chat(`${ad} kırıldı, yedeğim yok.`)
+          if (kirilan === yer) duyur(`${ad} kırıldı, yedeğim yok.`)
           continue
         }
         await bot.equip(yedek, yer)
-        if (kirilan === yer) bot.chat(`${ad} kırıldı, yedeğini giydim.`)
+        if (kirilan === yer) duyur(`${ad} kırıldı, yedeğini giydim.`)
       }
     } catch (e) {
       console.log('Zırh giyilemedi:', e.message)
@@ -423,8 +615,71 @@ async function baglan() {
       zirhGiyiyor = false
     }
   }
+  // Sessiz modda herkese değil, oyundaki sahiplere fısıldar
+  function duyur(m) {
+    const a = ayarlar.oku()
+    if (!a.sessiz) return bot.chat(m)
+    console.log(`[Sessiz] ${m}`)
+    for (const s of a.sahipler) {
+      const ad = Object.keys(bot.players).find((o) => o.toLowerCase() === s.toLowerCase())
+      if (ad) bot.whisper(ad, m)
+    }
+  }
+
+  // Kendiliğinden giyinme: yerden daha iyi bir zırh alınca hemen giyer
+  const zirhDeger = (isim) => {
+    const i = MALZEME_SIRA.indexOf(isim.split('_')[0])
+    return i === -1 ? 99 : i
+  }
+  async function zirhIyilestir() {
+    if (zirhGiyiyor || !bot.entity || bot.currentWindow || bot.targetDigBlock) return
+    zirhGiyiyor = true
+    try {
+      for (const [son, yer, ad] of ZIRH_PARCA) {
+        const enIyi = bot.inventory.items().filter((it) => it.name.endsWith(son))
+          .sort((x, y) => zirhDeger(x.name) - zirhDeger(y.name))[0]
+        if (!enIyi) continue
+        const giyili = bot.inventory.slots[bot.getEquipmentDestSlot(yer)]
+        if (giyili && zirhDeger(giyili.name) <= zirhDeger(enIyi.name)) continue
+        await bot.equip(enIyi, yer)
+        console.log(`[Zırh] Daha iyisini giydim: ${ad.toLowerCase()} -> ${enIyi.name}`)
+      }
+    } catch (e) {
+      console.log('Zırh giyilemedi:', e.message)
+    } finally {
+      zirhGiyiyor = false
+    }
+  }
+
+  // Kendiliğinden yeme: boştayken açlık 14'ün, iş yaparken 6'nın altına inince yer.
+  // Blok kazarken yemez (kazma yarıda kalmasın); yedikten sonra eline önceki eşyayı geri alır.
+  let otoYiyor = false
+  async function otoYe() {
+    if (otoYiyor || !gelisim || !bot.entity || bot.currentWindow || bot.isSleeping || bot.targetDigBlock) return
+    if (koruma) return // koruma kendi yiyor
+    if (bot.food > (mesgul ? 6 : 14)) return
+    otoYiyor = true
+    const elde = bot.heldItem ? bot.heldItem.name : null
+    try {
+      await gelisim.araclar.yemekYe()
+      if (elde && (!bot.heldItem || bot.heldItem.name !== elde)) {
+        const geri = bot.inventory.items().find((it) => it.name === elde)
+        if (geri) await bot.equip(geri, 'hand')
+      }
+    } catch (e) {
+      /* yiyemezse sonra tekrar dener */
+    } finally {
+      otoYiyor = false
+    }
+  }
+  bot.on('health', () => { otoYe() })
+
   // Envanter bot dünyaya doğunca hazır oluyor; dinleyiciyi o zaman bağla
   bot.once('spawn', () => {
+    bot.on('playerCollect', (toplayan, esya) => {
+      if (toplayan !== bot.entity) return
+      setTimeout(zirhIyilestir, 600)
+    })
     bot.inventory.on('updateSlot', (yuva, eski, yeni) => {
       // zırh yuvaları: 5 kask, 6 göğüslük, 7 pantolon, 8 bot
       if (yuva < 5 || yuva > 8 || !eski || yeni) return
@@ -437,7 +692,86 @@ async function baglan() {
   let saldiriHedef = null
   let saldiriCevap = null
 
+  // !koru: korunan oyuncu { ad, cevap, gorunmuyor, sonCanUyari, yiyor } (yoksa null)
+  let koruma = null
+  // Korurken bunlara saldırmaz: tarafsızlar (vurulunca herkese saldırırlar) ve baş edilemeyecekler
+  const KORU_HARIC = ['enderman', 'zombified_piglin', 'piglin', 'warden', 'ender_dragon', 'wither']
+  const KORU_SAHIP_MESAFE = 10 // korunan oyuncuya bu kadar yaklaşan canavara saldırır
+  const KORU_KOVALAMA = 16 // canavar korunan oyuncudan bu kadar uzaklaşırsa kovalamayı bırakır
+
+  // En iyi kılıcı (yoksa baltayı) eline al
+  async function silahAl() {
+    const SIRA = ['netherite', 'diamond', 'iron', 'stone', 'golden', 'wooden']
+    const deger = (it) => SIRA.indexOf(it.name.split('_')[0]) + (it.name.endsWith('_axe') ? 10 : 0)
+    const silah = bot.inventory.items()
+      .filter((it) => it.name.endsWith('_sword') || it.name.endsWith('_axe'))
+      .sort((x, y) => deger(x) - deger(y))[0]
+    const elde = bot.heldItem
+    if (!silah || (elde && elde.name === silah.name)) return
+    try { await bot.equip(silah, 'hand') } catch (e) { /* olmazsa elindekiyle vurur */ }
+  }
+
+  function korumayiBirak(cevap, mesaj) {
+    if (!koruma) return
+    koruma = null
+    saldiriHedef = null
+    bot.pathfinder.setGoal(null)
+    if (cevap && mesaj) cevap(mesaj)
+  }
+
+  // Yarım saniyede bir: korunan oyuncunun yanında kal, yaklaşan canavara saldır
+  function koruAdim() {
+    if (!koruma || !bot.entity || mesgul || bot.isSleeping) return
+    const sahip = oyuncuyuBul(koruma.ad)
+    if (bot.health <= 6 && Date.now() - koruma.sonCanUyari > 30000) {
+      koruma.cevap(`Canım az (${Math.round(bot.health)}/20), dikkat!`)
+      koruma.sonCanUyari = Date.now()
+    }
+    if (saldiriHedef) {
+      // canavar kaçıp korunan oyuncudan uzaklaştıysa peşinden gitme, yanına dön
+      if (sahip && saldiriHedef.position.distanceTo(sahip.position) > KORU_KOVALAMA) {
+        saldiriHedef = null
+        bot.pathfinder.setGoal(null)
+      }
+      return
+    }
+    if (!sahip) {
+      if (!koruma.gorunmuyor) {
+        koruma.cevap(`${koruma.ad}, seni göremiyorum. Yanıma gel, görünce korumaya devam ederim.`)
+        koruma.gorunmuyor = true
+      }
+      return
+    }
+    koruma.gorunmuyor = false
+    const ben = bot.entity.position
+    const dusman = bot.nearestEntity((e) =>
+      e.type === 'hostile' && !KORU_HARIC.includes(e.name) &&
+      Math.abs(e.position.y - sahip.position.y) < 6 &&
+      (e.position.distanceTo(sahip.position) < KORU_SAHIP_MESAFE || e.position.distanceTo(ben) < 8))
+    if (dusman) {
+      silahAl()
+      saldiriHedef = dusman
+      saldiriCevap = null // korurken her canavar için sohbete yazmasın
+      bot.pathfinder.setGoal(new goals.GoalFollow(dusman, 1), true)
+      console.log(`[Koruma] ${dusman.name} yaklaştı, saldırıyorum.`)
+      return
+    }
+    if (bot.food <= 14 && !koruma.yiyor && gelisim) {
+      const k = koruma
+      k.yiyor = true
+      gelisim.araclar.yemekYe().finally(() => { k.yiyor = false; silahAl() })
+    }
+    const hedef = bot.pathfinder.goal
+    if (!(hedef instanceof goals.GoalFollow && hedef.entity === sahip)) {
+      bot.pathfinder.setGoal(new goals.GoalFollow(sahip, 2), true)
+    }
+  }
+  let koruTik = 0
+  bot.on('physicsTick', () => { if (++koruTik % 10 === 0) koruAdim() })
+
   // Kendini koru: dibine gelen düşman yaratığa vur. !vur verildiyse hedefe vur.
+  const NOTR_YARATIK = ['enderman', 'zombified_piglin', 'piglin']
+  let sonHasar = 0
   let tik = 0
   bot.on('physicsTick', () => {
     if (++tik % 12 === 0 && saldiriHedef && bot.entity) {
@@ -455,17 +789,35 @@ async function baglan() {
     if (tik % 600 === 0) otoUyu() // 30 saniyede bir: gece olduysa yatağa gitsin mi?
     if (tik % 10 !== 0 || !bot.entity) return
     if (bot.targetDigBlock || bot.currentWindow) return // kazarken / fırındayken bozmayalım
+    // Tarafsızlar (enderman, domuz adamlar) vurulmadıkça saldırmaz: onlara sadece bot yeni hasar
+    // aldıysa (bize saldırıyorlarsa) karşılık verir. Warden ve boss'lara hiç bulaşmaz.
+    const yeniHasar = Date.now() - sonHasar < 2500
     const dusman = bot.nearestEntity((e) =>
-      e.type === 'hostile' && e.position.distanceTo(bot.entity.position) < 3.5)
+      e.type === 'hostile' && e.position.distanceTo(bot.entity.position) < 3.5 &&
+      !['warden', 'ender_dragon', 'wither'].includes(e.name) &&
+      (!NOTR_YARATIK.includes(e.name) || yeniHasar))
     if (dusman) bot.attack(dusman)
   })
+  bot.on('entityHurt', (e) => { if (e === bot.entity) sonHasar = Date.now() })
   bot.on('death', () => {
-    console.log('Öldü, yeniden doğuyor')
+    if (bot.entity) {
+      olumYeri = { konum: bot.entity.position.clone(), zaman: Date.now(), boyut: bot.game && bot.game.dimension }
+      const p = olumYeri.konum
+      console.log(`Öldü (${Math.floor(p.x)} ${Math.floor(p.y)} ${Math.floor(p.z)}), yeniden doğuyor`)
+    } else {
+      console.log('Öldü, yeniden doğuyor')
+    }
     bot.pathfinder.setGoal(null)
+    const esyaIpucu = ' Eşyalarımı toplamam için 5 dakika içinde !esyalarim yaz.'
+    bildirimEkle('olum', olumYeri
+      ? `Bot öldü (${Math.floor(olumYeri.konum.x)} ${Math.floor(olumYeri.konum.y)} ${Math.floor(olumYeri.konum.z)}). Eşyalar için 5 dk içinde !esyalarim.`
+      : 'Bot öldü.')
     if (mesgul) {
-      bot.chat(calisanIs
+      duyur((calisanIs
         ? `Öldüm, işi bıraktım. Tekrar denemek için ${calisanIs} yaz.`
-        : 'Öldüm, işi bıraktım.')
+        : 'Öldüm, işi bıraktım.') + esyaIpucu)
+    } else {
+      duyur('Öldüm.' + esyaIpucu)
     }
     if (gelisim) gelisim.iptal()
     durduruldu = true
@@ -479,7 +831,12 @@ async function baglan() {
     console.log('Hata:', sonHata)
   })
   bot.on('end', (sebep) => {
-    if (aktifBot === bot) aktifBot = null
+    if (aktifBot === bot) {
+      aktifBot = null
+      panelKomut = null
+      etkinlikAl = null
+      if (calisiyor && !hemenBaglan) bildirimEkle('baglanti', `Bağlantı koptu (${sebep}). ${TEKRAR_BAGLANMA_SN} sn sonra tekrar denenecek.`)
+    }
     if (hemenBaglan) {
       hemenBaglan = false
       console.log('Bağlantı kapatıldı, yeni ayarlarla bağlanılıyor.')
@@ -566,26 +923,67 @@ async function baglan() {
       cevap('Meşgulüm, önce !dur yaz.')
       return
     }
+    korumayiBirak(cevap, 'Korumayı bıraktım, yeni işe geçiyorum.')
     mesgul = true
     durduruldu = false
     calisanIs = tekrar
+    const kelimeler = sadelestir(sonKomut).split(/\s+/)
+    const ad = IS_ADLARI[kelimeler.slice(0, 2).join(' ')] || IS_ADLARI[kelimeler[0]] || sonKomut || 'İş'
+    isDurumu = { ad, komut: sonKomut, adim: '', sayi: null, toplam: null, baslangic: Date.now(), cevap }
+    const sessiz = sonKomut === '!uyu oto' // otomatik uyku için bildirim gelmesin
     try {
       await is()
       if (basariMesaji) cevap(basariMesaji)
+      if (!sessiz && !durduruldu) bildirimEkle('is', `İş bitti: ${ad}`)
     } catch (e) {
-      if (!durduruldu) cevap(hataOneki + e.message)
+      if (!durduruldu) {
+        cevap(hataOneki + e.message)
+        if (!sessiz) bildirimEkle('hata', `İş yarım kaldı (${ad}): ${e.message}`)
+      }
     } finally {
       mesgul = false
       calisanIs = ''
+      isDurumu = null
+    }
+  }
+
+  // Panel ve !durum için: bot şu an ne yapıyor
+  function etkinlik() {
+    if (isDurumu) {
+      return {
+        ad: isDurumu.ad, adim: isDurumu.adim, sayi: isDurumu.sayi, toplam: isDurumu.toplam,
+        sure: Math.round((Date.now() - isDurumu.baslangic) / 1000),
+      }
+    }
+    if (bot.isSleeping) return { ad: 'Uyuyor' }
+    if (koruma) {
+      return {
+        ad: `${koruma.ad} adlı oyuncuyu koruyor`,
+        adim: saldiriHedef ? `${saldiriHedef.name} ile savaşıyor` : (koruma.gorunmuyor ? 'Oyuncuyu göremiyor, bekliyor' : ''),
+      }
+    }
+    if (saldiriHedef) return { ad: 'Saldırıyor', adim: saldiriHedef.username || saldiriHedef.name || '' }
+    const g = bot.pathfinder.goal
+    if (g instanceof goals.GoalFollow && g.entity) return { ad: `${g.entity.username || g.entity.name} adlı oyuncuyu takip ediyor` }
+    if (bot.getControlState('sneak')) return { ad: 'Eğiliyor' }
+    return { ad: 'Boşta' }
+  }
+  etkinlikAl = etkinlik
+  // Uzun işler sayı bildirebilir (ör. !topla: 12/32)
+  bot.mcbotIlerleme = (sayi, toplam) => {
+    if (isDurumu) {
+      isDurumu.sayi = sayi
+      isDurumu.toplam = toplam
     }
   }
 
   // !uyu oto açıksa: gece olunca, boştaysa (iş yapmıyor, kimseyi takip etmiyor) yatağa gitsin.
   // Hataları sohbete yazmaz (yatak yoksa her 30 sn'de bir şikâyet etmesin), sadece terminale.
   function otoUyu() {
-    if (!otoUyku || !komutlar || mesgul || saldiriHedef || bot.isSleeping) return
+    if (!otoUyku || !komutlar || mesgul || saldiriHedef || koruma || bot.isSleeping) return
     if (bot.pathfinder.goal || !komutlar.geceMi()) return
     const sessiz = (m) => console.log('[Oto uyku]', m)
+    sonKomut = '!uyu oto'
     isYap(sessiz, () => komutlar.uyu(sessiz), null, 'Uyuyamadım: ')
   }
 
@@ -593,16 +991,36 @@ async function baglan() {
     if (kim === bot.username) return
     if (!mesaj.trim().startsWith('!')) return
 
-    const cevap = (m) => (ozel ? bot.whisper(kim, m) : bot.chat(m))
-    const parcalar = sadelestir(mesaj.trim()).split(/\s+/)
+    // Bu komutun cevapları: iş sürerken son cevap panelde "Şu an" satırında görünür
+    const cevap = (m) => {
+      if (isDurumu && isDurumu.cevap === cevap) isDurumu.adim = m
+      if (/yardım edebilir mi/i.test(m)) bildirimEkle('yardim', m)
+      if (ozel) return bot.whisper(kim, m)
+      // Sessiz mod: cevabı sadece komutu yazana fısılda (yardım çağrıları herkese gitsin)
+      if (ayarlar.oku().sessiz && !/yardım edebilir mi|yardım bekliyorum|!yardimet yazsın/i.test(m)) {
+        console.log(`[Fısıltı -> ${kim}] ${m}`)
+        return bot.whisper(kim, m)
+      }
+      return bot.chat(m)
+    }
+    let parcalar = sadelestir(mesaj.trim()).split(/\s+/)
+    if (KISALTMA[parcalar[0]]) parcalar = KISALTMA[parcalar[0]].split(' ').concat(parcalar.slice(1))
     const komut = parcalar[0]
     const isimYazilan = mesaj.trim().split(/\s+/)[1] // oyuncu adı (büyük/küçük harfi korunmuş)
     // Sahip olmayanlar sadece bota yardım edebilir
     if (!yetkiliMi(kim) && komut !== '!yardimet') return
+    sonKomut = parcalar.join(' ')
 
     switch (komut) {
       case '!yardim':
+        if (parcalar[1]) {
+          const ad = parcalar[1].replace(/^!/, '')
+          const ayrinti = YARDIM_AYRINTI[ad] || YARDIM_AYRINTI[YARDIM_ESANLAMLI[ad]]
+          cevap(ayrinti || `"${ad}" diye bir komut bilmiyorum. Komut listesi için !yardim yaz.`)
+          return
+        }
         YARDIM.forEach((satir) => cevap(satir))
+        cevap('Bir komutun ayrıntısı için: !yardim komut (ör. !yardim koru)')
         return
 
       case '!egil':
@@ -623,6 +1041,7 @@ async function baglan() {
         bot.stopDigging()
         bot.clearControlStates()
         saldiriHedef = null
+        koruma = null
         if (bot.isSleeping) bot.wake().catch(() => {})
         cevap('Durdum.')
         return
@@ -650,9 +1069,12 @@ async function baglan() {
         return
       }
 
-      case '!durum':
-        cevap(`Can: ${Math.round(bot.health)}/20, Açlık: ${bot.food}/20`)
+      case '!durum': {
+        const e = etkinlik()
+        const sayi = e.toplam ? ` (${e.sayi}/${e.toplam})` : ''
+        cevap(`Can: ${Math.round(bot.health)}/20, Açlık: ${bot.food}/20. Şu an: ${e.ad}${sayi}`)
         return
+      }
 
       case '!gelis':
         if (!gelisim) {
@@ -683,6 +1105,16 @@ async function baglan() {
         return
 
       case '!ev':
+        if (parcalar[1] === 'koylu' || parcalar[1] === 'koyluevi') {
+          // "!ev koylu" / "!ev köylü": köylü evi (eskiden bu kelime görülmeyip taş ev yapılıyordu)
+          if (!koyluYapici) {
+            cevap('Daha dünyaya doğmadım, biraz bekle.')
+            return
+          }
+          bot.setControlState('sneak', false)
+          await isYap(cevap, () => koyluYapici.koylu(cevap), null, 'Köylü evi yapamadım: ', '!ev koylu')
+          return
+        }
         if (!evYapici) {
           cevap('Daha dünyaya doğmadım, biraz bekle.')
           return
@@ -700,6 +1132,27 @@ async function baglan() {
         bot.setControlState('sneak', false)
         await isYap(cevap, () => koyluYapici.koylu(cevap), null, 'Köylü evi yapamadım: ', '!koylu')
         return
+
+      case '!eve':
+      case '!evegit':
+      case '!esyalarim':
+      case '!esyalarimi': {
+        if (!komutlar) {
+          cevap('Daha dünyaya doğmadım, biraz bekle.')
+          return
+        }
+        if (komut === '!eve' && parcalar[1] !== 'git' && parcalar[1] !== 'don') {
+          cevap('Kullanım: !eve git  (köylü evine: !eve git koylu, taş eve: !eve git tas)')
+          return
+        }
+        bot.setControlState('sneak', false)
+        if (komut.startsWith('!esyalarim')) {
+          await isYap(cevap, () => komutlar.esyalarim(olumYeri, cevap), null, 'Toplayamadım: ')
+        } else {
+          await isYap(cevap, () => komutlar.eveGit(parcalar.slice(1), cevap), null, 'Eve gidemedim: ', '!eve git')
+        }
+        return
+      }
 
       case '!ver':
       case '!sandik':
@@ -749,21 +1202,43 @@ async function baglan() {
         if (gelisim) cevap(gelisim.envanterOzeti().slice(0, 250))
         return
 
+      case '!kopya':
+        kopya.komut(parcalar.slice(1), cevap)
+        return
+
       case '!gom':
+        // "!gom KopyaAdi" sohbete yazıldıysa ve bu bot değilse sadece o kopya gömülür
+        if (!ozel && isimYazilan && sadelestir(isimYazilan) !== 'hepsi' &&
+          !kopya.adEslesir(bot.username, isimYazilan)) return
         bot.pathfinder.setGoal(null) // takip ediyorsa bıraksın
         await isYap(cevap, () => gomVeKapat(bot), 'Tamam, içerdeyim.', 'Olmadı: ')
         return
 
       case '!git': {
         const sayilar = parcalar.slice(1).map(Number)
-        if ((sayilar.length !== 2 && sayilar.length !== 3) || sayilar.some(isNaN)) {
-          cevap('Kullanım: !git x y z  veya  !git x z')
+        let hedef
+        if (parcalar.length === 2 && isNaN(sayilar[0])) {
+          // !git maden -> kayıtlı nokta
+          const n = noktaBul(parcalar[1])
+          if (!n) {
+            const adlar = noktalar().map((x) => x.ad).join(', ')
+            cevap(`"${parcalar[1]}" diye kayıtlı bir nokta yok. ${adlar ? 'Kayıtlılar: ' + adlar : 'Kaydetmek için: !kaydet ad'}`)
+            return
+          }
+          if (n.boyut && bot.game && bot.game.dimension !== n.boyut) {
+            cevap(`${n.ad} başka bir boyutta (${n.boyut}), oraya yürüyemem.`)
+            return
+          }
+          hedef = new goals.GoalNear(n.x, n.y, n.z, 1)
+        } else if ((sayilar.length !== 2 && sayilar.length !== 3) || sayilar.some(isNaN)) {
+          cevap('Kullanım: !git x y z,  !git x z  ya da kayıtlı nokta: !git ad')
           return
+        } else {
+          hedef =
+            sayilar.length === 3
+              ? new goals.GoalBlock(sayilar[0], sayilar[1], sayilar[2])
+              : new goals.GoalXZ(sayilar[0], sayilar[1])
         }
-        const hedef =
-          sayilar.length === 3
-            ? new goals.GoalBlock(sayilar[0], sayilar[1], sayilar[2])
-            : new goals.GoalXZ(sayilar[0], sayilar[1])
         await isYap(
           cevap,
           async () => {
@@ -774,6 +1249,74 @@ async function baglan() {
           'Vardım.',
           'Ulaşamadım: '
         )
+        return
+      }
+
+      case '!kaydet': {
+        const ad = parcalar[1]
+        if (!ad || !NOKTA_ADI.test(ad)) {
+          cevap('Kullanım: !kaydet ad  (harf, rakam, _ ve - ; en fazla 20 harf). Örnek: !kaydet maden')
+          return
+        }
+        if (!isNaN(Number(ad))) {
+          cevap('Nokta adı sadece sayı olamaz (!git 100 200 ile karışır).')
+          return
+        }
+        // Komutu yazan görünüyorsa onun durduğu yer, görünmüyorsa (ör. panelden) botun yeri
+        const oyuncu = oyuncuyuBul(kim)
+        const p = (oyuncu || bot.entity).position
+        const vardi = Boolean(noktaBul(ad))
+        noktaKaydet(ad, p, bot.game && bot.game.dimension)
+        cevap(`${ad} ${vardi ? 'güncellendi' : 'kaydedildi'}: ${Math.floor(p.x)} ${Math.floor(p.y)} ${Math.floor(p.z)}` +
+          `${oyuncu ? ' (senin durduğun yer)' : ' (benim durduğum yer)'}. Gitmek için: !git ${ad}`)
+        return
+      }
+
+      case '!noktalar': {
+        const liste = noktalar()
+        if (!liste.length) {
+          cevap('Kayıtlı nokta yok. Kaydetmek için: !kaydet ad')
+          return
+        }
+        let satir = 'Noktalar:'
+        for (const n of liste) {
+          const parca = ` ${n.ad} (${n.x} ${n.y} ${n.z}),`
+          if ((satir + parca).length > 240) {
+            cevap(satir.replace(/,$/, ''))
+            satir = ''
+          }
+          satir += parca
+        }
+        if (satir) cevap(satir.replace(/,$/, ''))
+        return
+      }
+
+      case '!sil': {
+        const ad = parcalar[1]
+        if (!ad) {
+          cevap('Kullanım: !sil ad  (kayıtlı noktayı siler)')
+          return
+        }
+        cevap(noktaSil(ad) ? `${ad} silindi.` : `"${ad}" diye kayıtlı bir nokta yok.`)
+        return
+      }
+
+      case '!sessiz': {
+        const a = ayarlar.oku()
+        const yeni = parcalar[1] === 'ac' ? true : parcalar[1] === 'kapat' ? false : !a.sessiz
+        ayarlar.yaz({ ...a, sessiz: yeni })
+        cevap(yeni
+          ? 'Sessiz mod açık: cevaplarımı sadece komutu yazana fısıldayacağım. Kapatmak için: !sessiz'
+          : 'Sessiz mod kapalı: cevaplarımı herkese yazacağım.')
+        return
+      }
+
+      case '!balik': {
+        if (!komutlar) {
+          cevap('Daha dünyaya doğmadım, biraz bekle.')
+          return
+        }
+        await isYap(cevap, () => komutlar.balik(parcalar.slice(1), cevap), null, 'Balık tutamadım: ', '!balik')
         return
       }
 
@@ -813,9 +1356,37 @@ async function baglan() {
           return
         }
         saldiriHedef = null
+        koruma = null
         bot.setControlState('sneak', false)
         bot.pathfinder.setGoal(new goals.GoalFollow(oyuncu, 2), true)
         cevap(`${ad === kim ? 'Seni' : ad + ' adlı oyuncuyu'} takip ediyorum. Bırakmam için !dur yaz.`)
+        return
+      }
+
+      case '!koru': {
+        if (mesgul) {
+          cevap('Meşgulüm, önce !dur yaz.')
+          return
+        }
+        if (['kapat', 'birak', 'dur'].includes(parcalar[1])) {
+          if (koruma) korumayiBirak(cevap, 'Korumayı bıraktım.')
+          else cevap('Zaten kimseyi korumuyorum.')
+          return
+        }
+        const ad = isimYazilan ? oyuncuAdi(isimYazilan) : kim
+        if (!ad) {
+          cevap(`${isimYazilan} adında bir oyuncu bulamadım.`)
+          return
+        }
+        if (!oyuncuyuBul(ad)) {
+          cevap(`${ad === kim ? 'Seni' : ad + ' adlı oyuncuyu'} göremiyorum, çok uzaktasın. Önce yanıma gel.`)
+          return
+        }
+        saldiriHedef = null
+        bot.setControlState('sneak', false)
+        koruma = { ad, cevap, gorunmuyor: false, sonCanUyari: 0, yiyor: false }
+        silahAl()
+        cevap(`${ad === kim ? 'Seni' : ad + ' adlı oyuncuyu'} koruyorum: yanından ayrılmam, yaklaşan canavarlara saldırırım. Bırakmam için !dur yaz.`)
         return
       }
 
@@ -862,6 +1433,7 @@ async function baglan() {
           } catch (e) { /* olmazsa elindekiyle vurur */ }
         }
         bot.setControlState('sneak', false)
+        koruma = null
         saldiriHedef = hedef
         saldiriCevap = cevap
         bot.pathfinder.setGoal(new goals.GoalFollow(hedef, 1), true)
@@ -869,13 +1441,34 @@ async function baglan() {
         return
       }
 
-      default:
-        // Bilinmeyen komutlara cevap vermiyoruz ki sohbeti doldurmasın
+      default: {
+        // Bilinmeyen komut: çok benzeyen bir komut varsa öner; yoksa sessiz kal
+        // (başka eklentilerin ! komutlarına karışmasın, sohbet dolmasın)
+        const oneri = komutOner(komut)
+        if (oneri) cevap(`${komut} diye bir komutum yok. ${oneri} mi demek istedin? (Hepsi: !yardim)`)
         return
+      }
     }
   }
 
   bot.on('chat', (kim, mesaj) => komutCalistir(kim, mesaj, false))
+  // Bildirim: biri sohbette botun adını yazdıysa (komut değilse) ya da bota fısıldadıysa
+  bot.on('chat', (kim, mesaj) => {
+    if (kim === bot.username || mesaj.trim().startsWith('!')) return
+    if (mesaj.toLowerCase().includes(bot.username.toLowerCase())) bildirimEkle('ad', `${kim}: ${mesaj}`)
+  })
+  bot.on('whisper', (kim, mesaj) => {
+    if (kim === bot.username || mesaj.trim().startsWith('!')) return
+    bildirimEkle('ad', `${kim} (fısıltı): ${mesaj}`)
+  })
+  // Bildirim: canı azaldı (en fazla 30 saniyede bir)
+  bot.on('health', () => {
+    if (bot.health > 0 && bot.health <= 6 && Date.now() - sonCanBildirimi > 30000) {
+      sonCanBildirimi = Date.now()
+      bildirimEkle('can', `Botun canı az: ${Math.round(bot.health)}/20`)
+    }
+  })
+  panelKomut = (kim, mesaj) => komutCalistir(kim, mesaj, false)
   bot.on('whisper', (kim, mesaj) => komutCalistir(kim, mesaj, true))
 }
 
@@ -913,6 +1506,7 @@ async function gomVeKapat(bot) {
 }
 
 const panel = panelBaslat(kontrol)
+lan.dinle() // panelde "LAN dünyası" seçilince açık dünyalar hemen listelensin
 baslat()
 guncelleme.baslat()
 

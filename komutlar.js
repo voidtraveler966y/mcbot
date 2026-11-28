@@ -1,9 +1,10 @@
-// komutlar.js — kolay komutlar: !ver, !sandik, !topla, !yap, !uyu
+// komutlar.js — kolay komutlar: !ver, !sandik, !topla, !yap, !uyu, !eve git, !esyalarim, !balik
 // gelisim.js'deki ortak araçları (git, bulVeKaz, uret ...) kullanır; bu yüzden !dur hepsini durdurur.
 // Gelen kelimeler bot.js'de sadeleştirilmiş olur: küçük harf, Türkçe harfsiz ("kılıç" -> "kilic").
 
 const { goals } = require('mineflayer-pathfinder')
 const { TR, Iptal } = require('./gelisim')
+const evler = require('./evler')
 
 // ------------------------------------------------------------ Türkçe eşya adları
 // "demir kazma" gibi iki kelimelik alet/zırh adları: malzeme + parça
@@ -217,7 +218,9 @@ function komutlarKur(bot, a) {
 
     let bos = 0
     let sonRapor = Date.now()
+    const ilerleme = () => bot.mcbotIlerleme && bot.mcbotIlerleme(Math.max(0, say() - ilk), adet)
     while (say() < hedef) {
+      ilerleme()
       await a.yemekYe()
       if (bot.inventory.emptySlotCount() === 0) {
         throw new Error(`envanterim doldu (${say() - ilk}/${adet}). !sandik yazıp tekrar dene`)
@@ -330,7 +333,202 @@ function komutlarKur(bot, a) {
     cevap('İyi geceler, uyuyorum. Sabah kalkarım.')
   }
 
-  return { ver, sandik, topla, yap, uyu, geceMi }
+  // ---------------------------------------------------------- !eve git [koylu|tas]
+  // En yakın kayıtlı evine yürür, kapıdan girip ortasında durur. Gece ise evdeki yatakta uyur.
+  async function eveGit(kelimeler, cevap) {
+    a.baslat(cevap)
+    const tur = kelimeler.find((k) => ['koylu', 'koyluevi', 'tas'].includes(k))
+    const ben = bot.entity.position
+    const liste = evler.hepsi()
+      .filter((e) => !tur || (tur === 'tas' ? e.tur !== 'koylu' : e.tur === 'koylu'))
+      .sort((x, y) => ben.distanceTo(x) - ben.distanceTo(y))
+    if (!liste.length) {
+      throw new Error(tur ? 'bu sunucuda o türde evim yok' : 'bu sunucuda hiç evim yok. Önce !ev ya da !ev koylu yaz')
+    }
+    const e = liste[0]
+    const koylu = e.tur === 'koylu'
+    const uzaklik = Math.round(ben.distanceTo(e))
+    // kapının önü: taş evde (x, y, z+3), köylü evinde basamağın önü (x, y-1, z+4)
+    const on = koylu ? { x: e.x, y: e.y - 1, z: e.z + 4 } : { x: e.x, y: e.y, z: e.z + 3 }
+    cevap(`${koylu ? 'Köylü evime' : 'Evime'} gidiyorum (${on.x} ${on.y} ${on.z}, ${uzaklik} blok).` +
+      (uzaklik > 300 ? ' Çok uzak, yol uzun sürebilir.' : ''))
+    bot.setControlState('sneak', false)
+    try {
+      await a.git(new goals.GoalNear(on.x, on.y, on.z, 1), Math.max(60000, uzaklik * 1500))
+    } catch (err) {
+      if (err instanceof Iptal) throw err
+      throw new Error(`evime ulaşamadım (${err.message}). Kapının önü: !git ${on.x} ${on.y} ${on.z}`)
+    }
+    // içeri gir (kapıyı bot.js yürürken açar)
+    try {
+      await a.git(new goals.GoalBlock(e.x, e.y, e.z), 20000)
+    } catch (err) {
+      if (err instanceof Iptal) throw err
+      cevap('Evimin önündeyim ama içeri giremedim (kapı kapalı ya da önü dolu olabilir).')
+      return
+    }
+    if (geceMi()) {
+      try {
+        await uyu(cevap)
+        return
+      } catch (err) {
+        if (err instanceof Iptal) throw err
+        cevap(`Evdeyim ama uyuyamadım: ${err.message}.`)
+        return
+      }
+    }
+    cevap('Evdeyim.')
+  }
+
+  // ---------------------------------------------------------- !esyalarim
+  // Öldüğü yere gidip yere düşen eşyalarını toplar, zırhını yeniden giyer.
+  // olum: bot.js'in ölünce kaydettiği { konum, zaman, boyut }
+  async function esyalarim(olum, cevap) {
+    a.baslat(cevap)
+    if (!olum) throw new Error('bu bağlantıda hiç ölmedim')
+    if (olum.boyut && bot.game && bot.game.dimension !== olum.boyut) throw new Error('öldüğüm yer başka bir boyutta (Nether/End)')
+    const p = olum.konum
+    const dakika = (Date.now() - olum.zaman) / 60000
+    if (dakika > 5) cevap('Öleli 5 dakikadan fazla oldu; eşyalar kaybolmuş olabilir, yine de bakıyorum.')
+    const uzaklik = Math.round(bot.entity.position.distanceTo(p))
+    cevap(`Öldüğüm yere gidiyorum (${Math.floor(p.x)} ${Math.floor(p.y)} ${Math.floor(p.z)}, ${uzaklik} blok).`)
+    bot.setControlState('sneak', false)
+    try {
+      await a.git(new goals.GoalNear(p.x, p.y, p.z, 2), Math.max(60000, uzaklik * 1500))
+    } catch (err) {
+      if (err instanceof Iptal) throw err
+      throw new Error(`öldüğüm yere ulaşamadım (${err.message}). Lav, su ya da çok derin bir yer olabilir`)
+    }
+    const toplam = () => bot.inventory.items().reduce((t, i) => t + i.count, 0)
+    const once = toplam()
+    const yerdeki = () => Object.values(bot.entities)
+      .filter((x) => x.name === 'item' && x.position.distanceTo(p) < 12)
+      .sort((x, y) => x.position.distanceTo(bot.entity.position) - y.position.distanceTo(bot.entity.position))
+    let bos = 0
+    for (let i = 0; i < 60 && bos < 4; i++) {
+      a.kontrol()
+      const esya = yerdeki()[0]
+      if (!esya) {
+        bos++
+        await a.bekle(10)
+        continue
+      }
+      bos = 0
+      const q = esya.position.floored()
+      try {
+        await a.git(new goals.GoalBlock(q.x, q.y, q.z), 8000)
+      } catch (err) {
+        if (err instanceof Iptal) throw err
+      }
+      await a.bekle(4)
+    }
+    await a.giyin()
+    const alinan = toplam() - once
+    const kalan = yerdeki().length
+    if (!alinan) throw new Error('yerde eşyamı bulamadım (kaybolmuş ya da biri almış olabilir)')
+    cevap(`${alinan} eşya topladım, zırhımı giydim.` + (kalan ? ` ${kalan} yığına yetişemedim.` : ''))
+  }
+
+  // ---------------------------------------------------------- !balik [adet]
+  // Yakındaki açık suyun kıyısına gider, oltayla balık tutar. Olta yoksa kendisi yapmaz, birinin vermesi gerekir.
+  // Balık gelmezse (olta karaya düştüyse) 40 sn sonra oltayı çekip yeniden atar.
+  async function balik(kelimeler, cevap) {
+    a.baslat(cevap)
+    const sayi = kelimeler.map(Number).find((n) => Number.isInteger(n) && n > 0)
+    const adet = Math.min(64, sayi || 10)
+    const olta = () => bot.inventory.items().find((i) => i.name === 'fishing_rod')
+    if (!olta()) throw new Error('oltam yok. Bana bir olta at (Q ile), sonra tekrar !balik yaz')
+
+    // Su: üstü açık, etrafında da su olan (gölet/deniz) en yakın su bloğu
+    const suMu = (p) => { const b = bot.blockAt(p); return b && b.name === 'water' }
+    const havaMi = (p) => { const b = bot.blockAt(p); return b && b.boundingBox === 'empty' && b.name !== 'water' }
+    const kuruMu = (p) => { const b = bot.blockAt(p); return b && b.boundingBox === 'block' }
+    const idler = [bot.registry.blocksByName.water.id]
+    const adaylar = bot.findBlocks({ matching: idler, maxDistance: 32, count: 300 })
+      .filter((p) => havaMi(p.offset(0, 1, 0)) && suMu(p.offset(1, 0, 0)) && suMu(p.offset(-1, 0, 0)) &&
+        suMu(p.offset(0, 0, 1)) && suMu(p.offset(0, 0, -1)))
+    if (!adaylar.length) throw new Error('32 blok içinde balık tutacak açık su yok')
+
+    // Kıyıda durulacak yer: suya 2-5 blok uzakta, kuru zeminli, başının üstü boş
+    let su = null
+    let durak = null
+    for (const w of adaylar.slice(0, 40)) {
+      for (let dx = -5; dx <= 5 && !durak; dx++) {
+        for (let dz = -5; dz <= 5 && !durak; dz++) {
+          for (const dy of [0, 1, -1, 2]) {
+            const zemin = w.offset(dx, dy, dz)
+            const ayak = zemin.offset(0, 1, 0)
+            const d = Math.hypot(dx, dz)
+            if (d < 2 || d > 5) continue
+            if (kuruMu(zemin) && havaMi(ayak) && havaMi(ayak.offset(0, 1, 0))) { durak = ayak; break }
+          }
+        }
+      }
+      if (durak) { su = w; break }
+    }
+    if (!su) su = adaylar[0]
+    cevap(`${adet} balık tutmaya gidiyorum.`)
+    bot.setControlState('sneak', false)
+    try {
+      await a.git(durak ? new goals.GoalBlock(durak.x, durak.y, durak.z) : new goals.GoalNear(su.x, su.y + 1, su.z, 3), 60000)
+    } catch (err) {
+      if (err instanceof Iptal) throw err
+      throw new Error(`suyun kıyısına gidemedim (${err.message})`)
+    }
+
+    // Balık gelene, süre dolana ya da !dur yazılana kadar bekle
+    const yaris = (soz, ms) => new Promise((coz) => {
+      let bitti = false
+      const t0 = Date.now()
+      const bitir = (sonuc) => { if (!bitti) { bitti = true; clearInterval(id); coz(sonuc) } }
+      const id = setInterval(() => {
+        let iptal = false
+        try { a.kontrol() } catch (e) { iptal = true }
+        if (iptal) bitir('iptal')
+        else if (Date.now() - t0 > ms) bitir('sure')
+      }, 250)
+      soz.then(() => bitir('tuttu'), () => bitir('kesildi'))
+    })
+
+    const sayim = () => {
+      const m = {}
+      for (const it of bot.inventory.items()) m[it.name] = (m[it.name] || 0) + it.count
+      return m
+    }
+    const ilk = sayim()
+    let tutma = 0
+    let bosAtis = 0
+    const ilerleme = () => bot.mcbotIlerleme && bot.mcbotIlerleme(tutma, adet)
+    while (tutma < adet) {
+      ilerleme()
+      a.kontrol()
+      if (!olta()) throw new Error(`oltam kırıldı (${tutma} balık tuttum). Yeni olta atarsan devam ederim`)
+      if (!bot.heldItem || bot.heldItem.name !== 'fishing_rod') await bot.equip(olta(), 'hand')
+      await bot.lookAt(su.offset(0.5, 0.2, 0.5), true)
+      const soz = bot.fish()
+      soz.catch(() => {}) // oltayı biz çekersek "Fishing cancelled" hatası verir; önemli değil
+      const sonuc = await yaris(soz, 40000)
+      if (sonuc === 'tuttu') {
+        tutma++
+        bosAtis = 0
+        await a.bekle(25) // yakalanan eşya uçup gelsin
+        continue
+      }
+      if (sonuc !== 'kesildi') bot.activateItem() // olta hâlâ dışarıda: geri çek
+      if (sonuc === 'iptal') a.kontrol() // Iptal fırlatır
+      if (++bosAtis >= 4) throw new Error(`olta suya düşmüyor ya da balık gelmiyor (${tutma}/${adet}). Beni başka bir suya götür`)
+      await a.bekle(10)
+    }
+    ilerleme()
+    await a.bekle(20)
+    // Ne tuttuğunu say (balık, ara sıra ayakkabı, kitap, eyer gibi şeyler de çıkar)
+    const son = sayim()
+    const kazanc = Object.keys(son).filter((n) => n !== 'fishing_rod' && son[n] > (ilk[n] || 0))
+      .map((n) => `${son[n] - (ilk[n] || 0)} ${TR[n] || n}`)
+    cevap(`Tamam, ${tutma} kez tuttum${kazanc.length ? ': ' + kazanc.join(', ') : ''}.`)
+  }
+
+  return { ver, sandik, topla, yap, uyu, geceMi, eveGit, esyalarim, balik }
 }
 
 module.exports = { komutlarKur }

@@ -1,7 +1,8 @@
 // ev.js — !ev komutu: bot kendine içi 3x3, dışı 5x5 küçük bir ev yapar.
 //   Duvarlar taştan (3 blok yüksek), çatı tahtadan (düz). Güney duvarında kapı,
 //   içeride çalışma masası, duvarda meşale; üstünde yatak varsa yatak.
-// Malzeme yoksa önce kendisi toplar: ~46 taş, ~37 tahta (yaklaşık 10 kütük).
+// Taşı ve odunu kendisi toplar: ~46 taş, ~37 tahta (yaklaşık 10 kütük). Kapı, çalışma masası ve
+// meşaleyi kendisi yapmaz: !yardimet ile oyunculardan yardım ister (köylü evindeki gibi).
 // Yakında düz, boş bir 5x5 alan arar; bulamazsa söyler.
 //
 // Yerleşim (yukarıdan bakış, kuzey yukarıda; m = evin ortası):
@@ -53,12 +54,90 @@ function evKur(bot, a, komutlar, anaHareket) {
     return null
   }
 
+  // ------------------------------------------------------------------ tahta (iki ev de kullanır)
+  // Stripped olmayan kütükler (tahtaya çevrilecek, yatay kuşakta kullanılacak olanlar)
+  const duzKutukMu = (n) => n.endsWith('_log') && !n.startsWith('stripped_')
+  const duzKutukSay = () => bot.inventory.items().filter((i) => duzKutukMu(i.name)).reduce((t, i) => t + i.count, 0)
+
+  // Ağaç türüne göre tahta sayısı, en çok olandan başlayarak
+  function tahtaTurleri() {
+    const sayi = {}
+    for (const it of bot.inventory.items()) if (it.name.endsWith('_planks')) sayi[it.name] = (sayi[it.name] || 0) + it.count
+    return Object.entries(sayi).sort((x, y) => y[1] - x[1])
+  }
+  function kutukTurleri() {
+    const sayi = {}
+    for (const it of bot.inventory.items()) if (duzKutukMu(it.name)) sayi[it.name] = (sayi[it.name] || 0) + it.count
+    return Object.entries(sayi).sort((x, y) => y[1] - x[1])
+  }
+
+  // Elde en az `gerek` tahta olsun. Kütüklerin `ayrilacakKutuk` kadarı kütük olarak kalır
+  // (köylü evinin kuşağı, odun kömürü için yardımcıya verilecek kütük). Fazlası tahtaya çevrilir;
+  // o da yetmezse odun toplanır. Hata olursa (odun bulamazsa) atmaz, elde ne varsa onunla devam edilir.
+  async function tahtaHazirla(gerek, ayrilacakKutuk, cevap, etiket) {
+    const cevir = async () => {
+      while (a.tahtaSay() < gerek && duzKutukSay() > ayrilacakKutuk) {
+        const kutuk = bot.inventory.items().find((i) => duzKutukMu(i.name))
+        const tahta = kutuk.name.replace('_log', '_planks')
+        if (!reg().itemsByName[tahta]) break
+        const once = a.tahtaSay()
+        await a.uret(tahta, 4)
+        if (a.tahtaSay() <= once) break
+      }
+    }
+    await cevir()
+    if (a.tahtaSay() >= gerek) return
+    const eksik = Math.ceil((gerek - a.tahtaSay()) / 4) + Math.max(0, ayrilacakKutuk - duzKutukSay())
+    cevap(`${etiket} için ${eksik} kütük daha lazım, topluyorum.`)
+    try {
+      await komutlar.topla(['odun', String(eksik + 1)], cevap)
+    } catch (e) {
+      if (e instanceof Iptal) throw e
+      console.log(`[${etiket}] odun toplanamadı:`, e.message)
+    }
+    a.baslat(cevap)
+    await cevir()
+  }
+
+  // Yardımcıya `n` tahta ver (en çok olan ağaç türünden başlayarak; çit, kapı, merdiven aynı tür ister).
+  // `ayrilacakTahta` kadar tahta (duvar/çatı için) ve `ayrilacakKutuk` kadar kütük bende kalır.
+  // Tahta yetmezse eksiği kütük olarak verir (1 kütük = 4 tahta). Dönüş: [[eşya, adet], ...]
+  function tahtaListesi(n, ayrilacakTahta, ayrilacakKutuk) {
+    const ver = []
+    let kalan = Math.min(n, Math.max(0, a.tahtaSay() - ayrilacakTahta))
+    let eksik = n - kalan
+    for (const [isim, adet] of tahtaTurleri()) {
+      if (kalan <= 0) break
+      const k = Math.min(adet, kalan)
+      ver.push([isim, k])
+      kalan -= k
+    }
+    let kutukHakki = Math.max(0, duzKutukSay() - ayrilacakKutuk)
+    for (const [isim, adet] of kutukTurleri()) {
+      if (eksik <= 0 || kutukHakki <= 0) break
+      const k = Math.min(adet, kutukHakki, Math.ceil(eksik / 4))
+      ver.push([isim, k])
+      eksik -= k * 4
+      kutukHakki -= k
+    }
+    return ver
+  }
+  const listeYazi = (ver) => ver.map(([i, n]) => `${n} ${i}`).join(', ') || 'yok'
+
   // ------------------------------------------------------------------ malzeme
-  // ihtiyac: { duvar: kaç taş, cati: kaç tahta, kapi: kapı takılacak mı }
+  // ihtiyac: { duvar: kaç taş, cati: kaç tahta, kapi, masa, mesale: takılacak mı }
+  // Bot taşı ve kütüğü kendisi toplar, çatı için kütüğü tahtaya çevirir. Kapı, çalışma masası ve
+  // meşaleyi kendisi YAPMAZ: "Biri bana yardım edebilir mi?" diye sorar, !yardimet yazan
+  // oyuncuya malzemeyi atar, yapılanları geri toplar (köylü evindeki gibi).
   async function malzemeHazirla(cevap, ihtiyac) {
     const DUVAR = ihtiyac.duvar
     const CATI = ihtiyac.cati
     const kapiLazim = ihtiyac.kapi && !kapiVar()
+    const masaLazim = ihtiyac.masa && !a.varMi('crafting_table')
+    const mesaleLazim = ihtiyac.mesale && !a.varMi('torch')
+    const komurVar = () => a.varMi('coal') || a.varMi('charcoal')
+    const komurKutugu = mesaleLazim && !komurVar() ? 1 : 0 // kömür yoksa yardımcı odun kömürü yapsın
+
     // 1) taş
     const tas = a.say(DUVAR_TASI)
     if (tas < DUVAR) {
@@ -67,47 +146,31 @@ function evKur(bot, a, komutlar, anaHareket) {
       a.baslat(cevap)
     }
 
-    // 2) tahta: çatı + (kapı yoksa 6) + (masa yoksa 4) + meşale çubuğu için 2
-    const tahtaGerek = CATI + (kapiLazim ? 6 : 0) + (a.varMi('crafting_table') ? 0 : 4) + 2
-    const eldeki = a.tahtaSay() + a.kutukSay() * 4
-    if (eldeki < tahtaGerek) {
-      const kutuk = Math.ceil((tahtaGerek - eldeki) / 4) + 1
-      cevap(`Çatı ve kapı için ${kutuk} kütük lazım, topluyorum.`)
-      await komutlar.topla(['odun', String(kutuk)], cevap)
+    // 2) tahta: çatı + yardımcıya verilecek (kapı 6, masa 4, meşale çubuğu için 2)
+    const yardimTahta = (kapiLazim ? 6 : 0) + (masaLazim ? 4 : 0) + (mesaleLazim ? 2 : 0)
+    await tahtaHazirla(CATI + yardimTahta, komurKutugu, cevap, 'Çatı ve kapı')
+
+    // 3) eşyaları yardımcı yapsın
+    const istenen = []
+    if (kapiLazim) istenen.push({ ad: 'tahta kapı', adet: 1, eslesir: (n) => n.endsWith('_door') && n !== 'iron_door' })
+    if (masaLazim) istenen.push({ ad: 'çalışma masası', adet: 1, eslesir: (n) => n === 'crafting_table' })
+    if (mesaleLazim) istenen.push({ ad: 'meşale', adet: 1, eslesir: (n) => n === 'torch' })
+    if (istenen.length) {
+      console.log(`[Taş ev] yardım öncesi: tahta ${a.tahtaSay()}, kütük ${duzKutukSay()}, çatı tahtası ${CATI}, yardım tahtası ${yardimTahta}`)
+      const ver = tahtaListesi(yardimTahta, CATI, komurKutugu)
+      if (mesaleLazim) {
+        const komur = ['coal', 'charcoal'].find((k) => a.varMi(k))
+        const kutuk = kutukTurleri()[0]
+        if (komur) ver.push([komur, 1])
+        else if (kutuk) ver.push([kutuk[0], 1]) // odun kömürü için
+      }
+      console.log(`[Taş ev] yardımcıya verilecek: ${listeYazi(ver)}`)
+      await a.yardimIste(istenen, ver, cevap, 'Biri bana yardım edebilir mi? Taş ev için şunlar lazım:')
       a.baslat(cevap)
     }
-    await a.tahtaYap(tahtaGerek)
 
-    // 3) kapı: elde en çok hangi tahta varsa o ağacın kapısı (6 aynı tahta = 3 kapı)
-    if (kapiLazim) {
-      const sayilar = {}
-      for (const it of bot.inventory.items()) {
-        if (it.name.endsWith('_planks')) sayilar[it.name] = (sayilar[it.name] || 0) + it.count
-      }
-      const [tur, adet] = Object.entries(sayilar).sort((x, y) => y[1] - x[1])[0] || []
-      if (!tur || adet < 6) throw new Error('kapı için aynı ağaçtan 6 tahta lazım')
-      const kapi = tur.replace('_planks', '_door')
-      if (!reg().itemsByName[kapi]) throw new Error(`${kapi} diye bir kapı yok`)
-      const masa = await a.masaHazirla()
-      await a.uret(kapi, 1, masa.blok)
-      await a.geriTopla(masa)
-    }
-
-    // 4) eve koyacağımız çalışma masası (yakındaki masa kullanıldıysa elimizde olmayabilir)
-    if (!a.varMi('crafting_table') && a.tahtaSay() >= CATI + 4) {
-      await a.uret('crafting_table', 1)
-    }
-
-    // 5) meşale (kömür varsa; yoksa meşalesiz olur)
-    if (!a.varMi('torch') && (a.varMi('coal') || a.varMi('charcoal'))) {
-      try {
-        if (!a.varMi('stick') && a.tahtaSay() >= CATI + 2) await a.uret('stick', 4)
-        if (a.varMi('stick')) await a.uret('torch', 1)
-      } catch (e) {
-        if (e instanceof Iptal) throw e
-      }
-    }
-
+    // 4) son kontrol: çatı tahtası (yardımcıya fazla verdiysek tamamla)
+    if (a.tahtaSay() < CATI) await tahtaHazirla(CATI, 0, cevap, 'Çatı')
     if (a.say(DUVAR_TASI) < DUVAR) throw new Error('duvar için yeterli taş toplayamadım')
     if (a.tahtaSay() < CATI) throw new Error('çatı için yeterli tahta yok')
   }
@@ -328,16 +391,18 @@ function evKur(bot, a, komutlar, anaHareket) {
       const eksikDuvar = p.duvarlar.filter((v) => !katiMi(bot.blockAt(v))).length
       const eksikCati = p.cati.filter((v) => !katiMi(bot.blockAt(v))).length
       const kapiTakili = bot.blockAt(m.offset(0, 0, 2)).name.endsWith('_door')
+      const masaVar = (bot.blockAt(m.offset(-1, 0, -1)) || {}).name === 'crafting_table'
+      const mesaleVar = ((bot.blockAt(m.offset(0, 1, -1)) || {}).name || '').endsWith('torch')
       evler.ekle(m)
       if (!eksikDuvar && !eksikCati && kapiTakili) {
         cevap(`Burada zaten evim var: ${m.x} ${m.y} ${m.z}. Yeni ev için beni 20 blok kadar uzağa götür.`)
         return m
       }
       cevap(`Yarım kalan evimi buldum (${m.x} ${m.y} ${m.z}), tamamlıyorum.`)
-      await malzemeHazirla(cevap, { duvar: eksikDuvar, cati: eksikCati, kapi: !kapiTakili })
+      await malzemeHazirla(cevap, { duvar: eksikDuvar, cati: eksikCati, kapi: !kapiTakili, masa: !masaVar, mesale: !mesaleVar })
     } else {
       cevap('Kendime bir ev yapacağım. Önce malzemeye bakıyorum.')
-      await malzemeHazirla(cevap, { duvar: DUVAR_GEREK, cati: CATI_GEREK, kapi: true })
+      await malzemeHazirla(cevap, { duvar: DUVAR_GEREK, cati: CATI_GEREK, kapi: true, masa: true, mesale: true })
       m = yerBul()
       if (!m) throw new Error('yakında düz ve boş 5x5 bir yer bulamadım. Beni düz bir yere götürüp tekrar dene')
       cevap(`Yer buldum: ${m.x} ${m.y} ${m.z}. İnşaata başlıyorum.`)
@@ -398,7 +463,7 @@ function evKur(bot, a, komutlar, anaHareket) {
   }
 
   // koylu.js de aynı blok koyma araçlarını kullanır
-  return { ev, yerBul, yerUygunMu, koy, katiMi, bosMu, havaMi, DUVAR_TASI }
+  return { ev, yerBul, yerUygunMu, koy, katiMi, bosMu, havaMi, DUVAR_TASI, tahtaHazirla, tahtaListesi, listeYazi }
 }
 
 module.exports = { evKur }

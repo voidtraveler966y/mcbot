@@ -42,6 +42,15 @@ const TR = {
   diamond_leggings: 'elmas pantolon', diamond_boots: 'elmas bot',
   stone_pickaxe: 'taş kazma', furnace: 'fırın',
   iron_ingot: 'demir külçe', diamond: 'elmas', stick: 'çubuk', cobblestone: 'kırıktaş',
+  sand: 'kum', coal: 'kömür', charcoal: 'odun kömürü',
+}
+// Tahta, kütük, yün gibi türü çok olan eşyalar: "oak_planks" -> "tahta (meşe)" yerine kısaca "tahta"
+function trAd(isim) {
+  if (TR[isim]) return TR[isim]
+  if (isim.endsWith('_planks')) return 'tahta'
+  if (isim.endsWith('_log')) return 'kütük'
+  if (isim.endsWith('_wool')) return 'yün'
+  return isim
 }
 
 class Iptal extends Error {}
@@ -722,21 +731,28 @@ function gelisimKur(bot, hareket) {
   }
 
   // Genel yardım isteme: `ver` listesindeki malzemeleri yardımcıya atar,
-  // `istenen` listesindeki eşyalar (her birinden 1) geri gelene kadar bekler.
-  // ver: [['iron_ingot', 24], ['stick', 5], ...]  istenen: ['iron_pickaxe', ...]
-  async function yardimIste(istenen, ver, cevap) {
-    const ad = (i) => TR[i] || i
-    const liste = istenen.map(ad).join(', ')
-    const elde = () => istenen.filter((i) => varMi(i)) // zaten olanlar
-    const bekleniyor = () => istenen.filter((i) => !varMi(i))
+  // `istenen` listesindeki eşyalar geri gelene kadar bekler.
+  // ver: [['iron_ingot', 24], ['stick', 5], ...]
+  // istenen: ['iron_pickaxe', ...] (her birinden 1) ya da
+  //          [{ ad: 'çit', adet: 16, eslesir: (isim) => isim.endsWith('_fence') }, ...] (türü fark etmez, toplam adet)
+  // baslik: yardım isteme cümlesi (verilmezse "Bana ... yapacak biri !yardimet yazsın")
+  async function yardimIste(istenen, ver, cevap, baslik = null) {
+    const kalemler = istenen.map((i) => (typeof i === 'string'
+      ? { ad: trAd(i), adet: 1, eslesir: (n) => n === i }
+      : i))
+    const sayKalem = (k) => bot.inventory.items().filter((it) => k.eslesir(it.name)).reduce((t, it) => t + it.count, 0)
+    const kalemYazi = (k) => (k.adet > 1 ? `${k.adet - sayKalem(k)} ${k.ad}` : k.ad)
+    const bekleniyor = () => kalemler.filter((k) => sayKalem(k) < k.adet)
+    const ad = trAd
     if (!bekleniyor().length) return
-    const oncedenVar = new Set(elde())
+    const liste = bekleniyor().map(kalemYazi).join(', ')
 
     durum.yardimBekliyor = true
     yardimci = null
     try {
       // 1) Yardımcı bekle
-      cevap(`Bana ${liste} yapacak biri !yardimet yazsın, malzemeleri ben veririm.`)
+      cevap(baslik ? `${baslik} ${liste}. Yapacak biri !yardimet yazsın, malzemeleri ben veririm.`
+        : `Bana ${liste} yapacak biri !yardimet yazsın, malzemeleri ben veririm.`)
       let sonHatirlatma = Date.now()
       let oyuncu = null
       while (!oyuncu) {
@@ -788,12 +804,13 @@ function gelisimKur(bot, hareket) {
       }
       cevap(`${yardimci}, sana ${atilan.join(', ') || 'hiçbir şey'} attım.` +
         (eksikler.length ? ` Eksik: ${eksikler.join(', ')}, onları sen ekle.` : ''))
-      cevap(`Lütfen şunları yapıp bana geri at (Q tuşu): ${bekleniyor().map(ad).join(', ')}`)
+      cevap(`Lütfen şunları yapıp bana geri at (Q tuşu): ${bekleniyor().map(kalemYazi).join(', ')}`)
       // Attığımız eşyaları hemen geri toplamamak için biraz bekle
       await bekle(60)
 
       // 3) Yapılanları bekle: oyuncuyu takip et, yakına atılan eşyaları topla
-      let kalan = bekleniyor().length
+      const kalanToplam = () => bekleniyor().reduce((t, k) => t + k.adet - sayKalem(k), 0)
+      let kalan = kalanToplam()
       sonHatirlatma = Date.now()
       while (bekleniyor().length) {
         const p = bot.players[yardimci]
@@ -804,7 +821,7 @@ function gelisimKur(bot, hareket) {
         const esya = Object.values(bot.entities).find((e) => {
           if (e.name !== 'item' || e.position.distanceTo(ben) > 8) return false
           const it = e.getDroppedItem && e.getDroppedItem()
-          return it && istenen.includes(it.name) && !oncedenVar.has(it.name)
+          return it && bekleniyor().some((k) => k.eslesir(it.name))
         })
         if (esya) {
           const q = esya.position.floored()
@@ -814,13 +831,13 @@ function gelisimKur(bot, hareket) {
             if (e instanceof Iptal) throw e
           }
         }
-        if (bekleniyor().length < kalan) {
-          kalan = bekleniyor().length
-          cevap(kalan ? `Teşekkürler! Kalan: ${bekleniyor().map(ad).join(', ')}` : 'Hepsi geldi, çok teşekkürler!')
+        if (kalanToplam() < kalan) {
+          kalan = kalanToplam()
+          cevap(kalan ? `Teşekkürler! Kalan: ${bekleniyor().map(kalemYazi).join(', ')}` : 'Hepsi geldi, çok teşekkürler!')
           await giyin()
           sonHatirlatma = Date.now()
         } else if (Date.now() - sonHatirlatma > 120000) {
-          cevap(`Hâlâ bekliyorum: ${bekleniyor().map(ad).join(', ')}`)
+          cevap(`Hâlâ bekliyorum: ${bekleniyor().map(kalemYazi).join(', ')}`)
           sonHatirlatma = Date.now()
         }
       }

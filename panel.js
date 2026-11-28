@@ -5,6 +5,7 @@
 const http = require('http')
 const { exec } = require('child_process')
 const ayarlar = require('./ayarlar')
+const lan = require('./lan')
 
 const PANEL_PORT = Number(process.env.MCBOT_PANEL_PORT) || 3000
 const IZINLI_HOST = [`localhost:${PANEL_PORT}`, `127.0.0.1:${PANEL_PORT}`]
@@ -31,6 +32,11 @@ function panelBaslat(kontrol) {
         gonder(200, { ...kontrol.durumAl(), ayarlar: ayarlar.oku() })
         return
       }
+      if (istek.method === 'GET' && istek.url === '/api/lan') {
+        lan.dinle()
+        gonder(200, { dunyalar: lan.liste(), ...lan.durum() })
+        return
+      }
       if (istek.method === 'GET' && istek.url === '/api/harita') {
         gonder(200, kontrol.haritaAl() || { yok: true })
         return
@@ -42,7 +48,7 @@ function panelBaslat(kontrol) {
           if (hata) return gonder(400, { hata })
           const eski = ayarlar.oku()
           ayarlar.yaz(ayar)
-          const baglantiDegisti = ['host', 'port', 'username', 'version', 'giris'].some((k) => eski[k] !== ayar[k])
+          const baglantiDegisti = ['tur', 'host', 'port', 'lanAd', 'username', 'version', 'giris'].some((k) => eski[k] !== ayar[k])
           let mesaj = 'Kaydedildi.'
           if (baglantiDegisti && kontrol.calisiyorMu()) {
             kontrol.yenidenBaglan()
@@ -76,6 +82,14 @@ function panelBaslat(kontrol) {
         if (istek.url === '/api/yeniden') {
           kontrol.yenidenBaglan()
           return gonder(200, { mesaj: 'Bot yeniden bağlanıyor.' })
+        }
+        if (istek.url === '/api/komut') {
+          // Paneldeki komut düğmeleri: komut, seçilen sahibin sohbete yazmış gibi çalışır
+          const metin = String(govde.metin || '').trim().slice(0, 250)
+          if (!metin.startsWith('!')) return gonder(400, { hata: 'Komut ! ile başlamalı (ör. !gel).' })
+          const hata = kontrol.komut(metin, String(govde.kim || ''))
+          if (hata) return gonder(409, { hata })
+          return gonder(200, { mesaj: metin + ' gönderildi.' })
         }
         if (istek.url === '/api/sohbet') {
           const metin = String(govde.metin || '').trim().slice(0, 250)
@@ -182,6 +196,23 @@ const SAYFA = `<!DOCTYPE html>
   button.tehlike { background: #fff; color: var(--kirmizi); border-color: #efc7bf; }
   button:disabled { opacity: 0.5; cursor: default; }
   .butonlar { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  .komut-izgara { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; margin-top: 12px; }
+  .komut-izgara button { padding: 9px 8px; }
+  .komut-izgara button.ayri { grid-column: 1 / -1; }
+  .is-ad { font-weight: 600; }
+  .kucuk-baslik { font-size: 13px; color: var(--soluk); margin: 12px 0 6px; }
+  .kisa-liste { display: flex; flex-wrap: wrap; gap: 6px; }
+  .kisa-liste button { padding: 5px 10px; font-size: 13px; font-weight: 500; }
+  .kisa-liste .bos { color: var(--soluk); font-size: 13px; }
+  #harita.tiklanir { cursor: crosshair; }
+  .is-adim { color: var(--soluk); font-size: 13px; margin-top: 2px; overflow-wrap: anywhere; }
+  .is-cubuk { height: 8px; background: var(--cizgi); border-radius: 4px; overflow: hidden; margin-top: 5px; max-width: 260px; }
+  .is-cubuk span { display: block; height: 100%; background: var(--yesil, #3a8f3a); }
+  .bildirim-liste { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 6px; max-height: 260px; overflow-y: auto; }
+  .bildirim-liste li { display: flex; gap: 8px; align-items: baseline; font-size: 14px; padding: 6px 8px; border-radius: 8px; background: #f6f7f5; }
+  .bildirim-liste li.kotu { background: #fbecea; }
+  .bildirim-liste time { color: var(--soluk); font-size: 12px; white-space: nowrap; }
+  .bildirim-liste .bos { background: none; color: var(--soluk); padding: 0; }
   .cipler { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; min-height: 34px; }
   .cip { display: inline-flex; align-items: center; gap: 6px; background: var(--gri-acik); border-radius: 999px;
     padding: 5px 6px 5px 12px; font-weight: 600; }
@@ -250,6 +281,13 @@ const SAYFA = `<!DOCTYPE html>
     padding: 10px 12px; cursor: pointer; font-weight: 400; margin: 0; }
   .secenek:has(input:checked) { border-color: var(--yesil); background: var(--yesil-acik); }
   .secenek input { margin-top: 4px; }
+  .secenekler.iki { grid-template-columns: 1fr 1fr; }
+  .lan-liste { display: grid; gap: 6px; margin-top: 4px; }
+  .lan-dunya { text-align: left; background: #fff; color: var(--yazi); border: 1px solid var(--cizgi); font-weight: 500; display: block; width: 100%; }
+  .lan-dunya b { display: block; }
+  .lan-dunya .ipucu { display: block; margin: 0; font-weight: 400; }
+  .lan-dunya.secili { border-color: var(--yesil); background: var(--yesil-acik); }
+  .lan-bos { color: var(--soluk); font-size: 14px; padding: 10px; border: 1px dashed var(--cizgi); border-radius: 8px; }
   .secenek b { display: block; }
 </style>
 </head>
@@ -275,11 +313,26 @@ const SAYFA = `<!DOCTYPE html>
   <h2>Hoş geldiniz! Botu kuralım</h2>
   <p class="ipucu" style="margin-top:0">Bu bilgileri sonra da panelden değiştirebilirsiniz.</p>
   <form id="f-kurulum" autocomplete="off">
+    <label>Nereye girsin?</label>
+    <div class="secenekler iki">
+      <label class="secenek"><input type="radio" name="k-tur" value="sunucu" checked>
+        <span><b>Sunucu</b><span class="ipucu">Aternos gibi adresi olan bir sunucu</span></span></label>
+      <label class="secenek"><input type="radio" name="k-tur" value="lan">
+        <span><b>LAN dünyası</b><span class="ipucu">Aynı evde "LAN'a Aç" ile açılan dünya</span></span></label>
+    </div>
+    <div id="k-lan-alan" hidden>
+      <label>Açık LAN dünyaları <span class="ipucu">— birini seçin</span></label>
+      <div class="lan-liste" id="k-lan-liste"></div>
+      <p class="ipucu">Dünyayı açan oyunda Esc &gt; "LAN'a Aç" deyin; birkaç saniye içinde burada görünür. Port her açılışta değişir, bot güncelini kendisi bulur.
+        Normal Minecraft LAN dünyaları hesabı doğrular: bot için satın alınmış bir hesap (Microsoft girişi) ya da dünyayı açanda LAN'ı offline yapan bir mod (ör. LAN World Plug-n-Play) gerekir.</p>
+    </div>
+    <div id="k-sunucu-alan">
     <label for="k-host">Sunucu adresi</label>
     <input type="text" id="k-host" placeholder="ornek.aternos.me" spellcheck="false">
     <label for="k-port">Port <span class="ipucu">— boş bırakırsanız otomatik bulunur</span></label>
     <input type="text" id="k-port" placeholder="otomatik" inputmode="numeric">
-    <label>Sunucu ne tür?</label>
+    </div>
+    <label>Hesap türü</label>
     <div class="secenekler">
       <label class="secenek"><input type="radio" name="k-giris" value="offline" checked>
         <span><b>Korsan / offline sunucu</b><span class="ipucu">Aternos'ta "Cracked" açık sunucular gibi. Bota istediğiniz adı verirsiniz.</span></span></label>
@@ -321,6 +374,7 @@ const SAYFA = `<!DOCTYPE html>
       <dt>Can</dt><dd id="d-can">–</dd>
       <dt>Açlık</dt><dd id="d-aclik">–</dd>
       <dt>Konum</dt><dd id="d-konum">–</dd>
+      <dt>Şu an</dt><dd id="d-is">–</dd>
       <dt>Oyuncular</dt><dd><div id="d-oyuncular" class="oyuncular">–</div></dd>
     </dl>
     <div class="butonlar">
@@ -328,6 +382,46 @@ const SAYFA = `<!DOCTYPE html>
       <button id="b-yeniden" class="ikincil">Yeniden bağlan</button>
       <button id="b-durdur" class="tehlike">Durdur</button>
     </div>
+  </section>
+
+  <section class="kart">
+    <h2>Komutlar</h2>
+    <div class="satir">
+      <label for="i-kim" style="white-space:nowrap">Kim için:</label>
+      <select id="i-kim" title="Gel, Takip et ve Koru bu oyuncuya göre çalışır"></select>
+    </div>
+    <div class="komut-izgara" id="komutlar">
+      <button type="button" data-komut="!gel">Gel</button>
+      <button type="button" data-komut="!takip">Takip et</button>
+      <button type="button" data-komut="!koru">Koru</button>
+      <button type="button" data-komut="!eve git" class="ikincil">Eve git</button>
+      <button type="button" data-komut="!esyalarim" class="ikincil">Eşyalarımı topla</button>
+      <button type="button" data-komut="!uyu" class="ikincil">Uyu</button>
+      <button type="button" data-komut="!ev" class="ikincil">Taş ev yap</button>
+      <button type="button" data-komut="!ev koylu" class="ikincil">Köylü evi yap</button>
+      <button type="button" data-komut="!gelis" class="ikincil">Demir set (gelişim)</button>
+      <button type="button" data-komut="!balik" class="ikincil">Balık tut</button>
+      <button type="button" data-komut="!dur" class="tehlike ayri">Dur</button>
+    </div>
+    <form id="f-komut" class="satir" autocomplete="off" style="margin-top:12px">
+      <input type="text" id="i-komut" placeholder="Başka komut: !topla odun 32" maxlength="250" spellcheck="false">
+      <button type="submit" class="ikincil">Çalıştır</button>
+    </form>
+    <div class="kucuk-baslik">Kayıtlı noktalar (oyunda: !kaydet ad)</div>
+    <div class="kisa-liste" id="nokta-liste"></div>
+    <div class="kucuk-baslik">Son komutlar</div>
+    <div class="kisa-liste" id="gecmis-liste"></div>
+    <p class="ipucu" id="komut-bilgi" style="margin-bottom:0"></p>
+  </section>
+
+  <section class="kart">
+    <h2>Bildirimler</h2>
+    <div class="secenekler">
+      <label><input type="checkbox" id="c-ses"> Sesli uyarı</label>
+      <label id="c-masaustu-satir"><input type="checkbox" id="c-masaustu"> Masaüstü bildirimi (panel arkada olsa da görünür)</label>
+    </div>
+    <p class="ipucu" style="margin-bottom:0">Bot ölünce, canı azalınca, yardım isteyince, iş bitince ya da yarım kalınca, biri adını yazınca ve bağlantı kopunca.</p>
+    <ul id="bildirim-liste" class="bildirim-liste"></ul>
   </section>
 
   <section class="kart">
@@ -340,23 +434,39 @@ const SAYFA = `<!DOCTYPE html>
       <span>Kuzey yukarıda · 65×65 blok</span>
     </div>
     <p class="ipucu" id="harita-bilgi" style="margin-bottom:0">–</p>
+    <p class="ipucu" style="margin:6px 0 0">Haritada bir yere tıklayınca bot oraya yürür.</p>
   </section>
 
   <section class="kart">
     <h2>Bağlantı ayarları</h2>
     <form id="f-ayar" autocomplete="off">
+      <label>Nereye girsin?</label>
+    <div class="secenekler iki">
+      <label class="secenek"><input type="radio" name="i-tur" value="sunucu" checked>
+        <span><b>Sunucu</b><span class="ipucu">Aternos gibi adresi olan bir sunucu</span></span></label>
+      <label class="secenek"><input type="radio" name="i-tur" value="lan">
+        <span><b>LAN dünyası</b><span class="ipucu">Aynı evde "LAN'a Aç" ile açılan dünya</span></span></label>
+    </div>
+    <div id="i-lan-alan" hidden>
+      <label>Açık LAN dünyaları <span class="ipucu">— birini seçin</span></label>
+      <div class="lan-liste" id="i-lan-liste"></div>
+      <p class="ipucu">Dünyayı açan oyunda Esc &gt; "LAN'a Aç" deyin; birkaç saniye içinde burada görünür. Port her açılışta değişir, bot güncelini kendisi bulur.
+        Normal Minecraft LAN dünyaları hesabı doğrular: bot için satın alınmış bir hesap (Microsoft girişi) ya da dünyayı açanda LAN'ı offline yapan bir mod (ör. LAN World Plug-n-Play) gerekir.</p>
+    </div>
+    <div id="i-sunucu-alan">
       <label for="i-host">Sunucu adresi</label>
       <input type="text" id="i-host" placeholder="ornek.aternos.me" spellcheck="false">
       <label for="i-port">Port <span class="ipucu">— boş bırakırsanız otomatik bulunur</span></label>
       <input type="text" id="i-port" placeholder="otomatik" inputmode="numeric">
+      </div>
       <label for="i-isim">Bot adı <span class="ipucu">— 3-16 karakter, harf, rakam, _ ve .</span></label>
       <input type="text" id="i-isim" maxlength="16" spellcheck="false">
       <label for="i-surum">Minecraft sürümü <span class="ipucu">— boş bırakırsanız otomatik</span></label>
       <input type="text" id="i-surum" placeholder="otomatik" spellcheck="false">
       <label for="i-giris">Giriş türü</label>
       <select id="i-giris">
-        <option value="offline">Korsan / offline sunucu (ad sizden)</option>
-        <option value="microsoft">Microsoft hesabı (normal sunucu)</option>
+        <option value="offline">Korsan / offline (ad sizden)</option>
+        <option value="microsoft">Microsoft hesabı (satın alınmış hesap)</option>
       </select>
       <div class="butonlar"><button type="submit">Kaydet ve bağlan</button></div>
     </form>
@@ -390,6 +500,9 @@ const SAYFA = `<!DOCTYPE html>
 const $ = (id) => document.getElementById(id)
 let ayar = null
 let formDolduruldu = false
+let sonHarita = null
+let haritaTiklanir = false
+let haritaHedef = null // { x, z, zaman }: tıklanan yer, bot varana kadar haritada işaretli
 
 function bildir(metin, iyi = true) {
   const b = $('bildirim')
@@ -566,9 +679,17 @@ async function yenile() {
     $('i-isim').value = ayar.username
     $('i-surum').value = ayar.version
     $('i-giris').value = ayar.giris
+    turSec('i', ayar.tur || 'sunucu')
+    if (ayar.tur === 'lan' && ayar.host) lanSecim.i = { host: ayar.host, port: ayar.port, ad: ayar.lanAd || '' }
     formDolduruldu = true
   }
   sahipleriCiz()
+  kimListesiCiz(v)
+  isCiz(v.is)
+  bildirimleriIsle(v.bildirimler)
+  noktalariCiz(v)
+  haritaTiklanir = Boolean(v.oyunda) && ((ayar && ayar.sahipler) || []).length > 0
+  $('harita').classList.toggle('tiklanir', haritaTiklanir)
 
   const k = $('kayit')
   const enAltta = k.scrollTop + k.clientHeight >= k.scrollHeight - 30
@@ -579,10 +700,9 @@ async function yenile() {
 $('f-ayar').onsubmit = async (e) => {
   e.preventDefault()
   try {
-    const v = await istek('/api/ayarlar', { ayarlar: {
-      host: $('i-host').value, port: $('i-port').value, username: $('i-isim').value, version: $('i-surum').value,
-      giris: $('i-giris').value,
-    } })
+    const v = await istek('/api/ayarlar', { ayarlar: Object.assign({
+      username: $('i-isim').value, version: $('i-surum').value, giris: $('i-giris').value,
+    }, baglantiAlanlari('i')) })
     ayar = v.ayarlar
     $('i-host').value = ayar.host
     $('i-port').value = ayar.port || ''
@@ -595,10 +715,10 @@ $('f-kurulum').onsubmit = async (e) => {
   e.preventDefault()
   const secili = document.querySelector('input[name="k-giris"]:checked')
   try {
-    const v = await istek('/api/kurulum', { ayarlar: {
-      host: $('k-host').value, port: $('k-port').value, username: $('k-isim').value,
-      version: $('k-surum').value, giris: secili ? secili.value : 'offline', sahipler: [$('k-sahip').value],
-    } })
+    const v = await istek('/api/kurulum', { ayarlar: Object.assign({
+      username: $('k-isim').value, version: $('k-surum').value, giris: secili ? secili.value : 'offline',
+      sahipler: [$('k-sahip').value],
+    }, baglantiAlanlari('k')) })
     ayar = v.ayarlar
     formDolduruldu = false
     bildir(v.mesaj)
@@ -628,10 +748,328 @@ for (const [id, yol] of [['b-baslat', '/api/baslat'], ['b-durdur', '/api/durdur'
   }
 }
 
+// ---------------------------------------------------------------- nereye girsin: sunucu / LAN
+// on: 'k' (ilk kurulum) ya da 'i' (bağlantı ayarları)
+const lanSecim = { k: null, i: null } // seçilen LAN dünyası { host, port, ad }
+function seciliTur(on) {
+  const r = document.querySelector('input[name="' + on + '-tur"]:checked')
+  return r ? r.value : 'sunucu'
+}
+function turSec(on, tur) {
+  for (const r of document.querySelectorAll('input[name="' + on + '-tur"]')) r.checked = r.value === tur
+  turGoster(on)
+}
+function turGoster(on) {
+  const lanMi = seciliTur(on) === 'lan'
+  $(on + '-lan-alan').hidden = !lanMi
+  $(on + '-sunucu-alan').hidden = lanMi
+  if (lanMi) lanYenile()
+}
+for (const on of ['k', 'i']) {
+  for (const r of document.querySelectorAll('input[name="' + on + '-tur"]')) r.onchange = () => turGoster(on)
+}
+// Kaydederken gönderilecek bağlantı alanları
+function baglantiAlanlari(on) {
+  if (seciliTur(on) === 'lan') {
+    const d = lanSecim[on]
+    if (!d) return { tur: 'lan', host: '' } // sunucu "Listeden bir LAN dünyası seçin" der
+    return { tur: 'lan', host: d.host, port: d.port, lanAd: d.ad }
+  }
+  return { tur: 'sunucu', host: $(on + '-host').value, port: $(on + '-port').value }
+}
+
+let lanSon = []
+async function lanYenile() {
+  const gorunen = ['k', 'i'].filter((on) => !$(on + '-lan-alan').hidden && !$(on + '-lan-alan').closest('[hidden]'))
+  if (!gorunen.length) return
+  try { const v = await istek('/api/lan'); lanSon = v.dunyalar || []; lanSon.hata = v.hata } catch (e) { return }
+  for (const on of gorunen) lanCiz(on)
+}
+function lanCiz(on) {
+  const kutu = $(on + '-lan-liste')
+  const secili = lanSecim[on]
+  const liste = lanSon.slice()
+  // kayıtlı dünya şu an kapalıysa da seçili olarak görünsün
+  if (secili && !liste.some((d) => d.host === secili.host && d.ad === secili.ad)) {
+    liste.push({ ad: secili.ad || 'Kayıtlı LAN dünyası', host: secili.host, port: secili.port, kapali: true })
+  }
+  kutu.innerHTML = ''
+  if (!liste.length) {
+    const b = document.createElement('div')
+    b.className = 'lan-bos'
+    b.textContent = lanSon.hata ? 'Ağ dinlenemiyor: ' + lanSon.hata : 'Açık LAN dünyası aranıyor…'
+    kutu.appendChild(b)
+    return
+  }
+  for (const d of liste) {
+    const b = document.createElement('button')
+    b.type = 'button'
+    const seciliMi = secili && secili.host === d.host && (secili.ad === d.ad || !secili.ad)
+    b.className = 'lan-dunya' + (seciliMi ? ' secili' : '')
+    const ad = document.createElement('b')
+    ad.textContent = d.ad
+    const alt = document.createElement('span')
+    alt.className = 'ipucu'
+    alt.textContent = (d.yerel ? 'Bu bilgisayar' : d.host) + ' · port ' + d.port + (d.kapali ? ' · şu an kapalı' : '')
+    b.appendChild(ad)
+    b.appendChild(alt)
+    b.onclick = () => { lanSecim[on] = { host: d.host, port: d.port, ad: d.ad }; lanCiz(on) }
+    kutu.appendChild(b)
+  }
+}
+setInterval(lanYenile, 2000)
+
+// ---------------------------------------------------------------- şu an ne yapıyor
+function sureYazi(sn) {
+  if (sn < 60) return sn + ' sn'
+  return Math.floor(sn / 60) + ' dk ' + (sn % 60) + ' sn'
+}
+function isCiz(is) {
+  const d = $('d-is')
+  d.innerHTML = ''
+  if (!is) { d.textContent = '–'; return }
+  const ad = document.createElement('div')
+  ad.className = 'is-ad'
+  ad.textContent = is.ad + (is.sure ? ' · ' + sureYazi(is.sure) : '')
+  d.appendChild(ad)
+  if (is.toplam) {
+    const c = document.createElement('div')
+    c.className = 'is-cubuk'
+    const dolu = document.createElement('span')
+    dolu.style.width = Math.min(100, Math.round((is.sayi / is.toplam) * 100)) + '%'
+    c.appendChild(dolu)
+    c.title = is.sayi + '/' + is.toplam
+    d.appendChild(c)
+  }
+  if (is.adim) {
+    const adim = document.createElement('div')
+    adim.className = 'is-adim'
+    adim.textContent = is.adim
+    d.appendChild(adim)
+  }
+}
+
+// ---------------------------------------------------------------- bildirimler
+const KOTU_BILDIRIM = ['olum', 'hata', 'baglanti', 'can']
+const SIMGE = { olum: '💀', can: '❤️', yardim: '🙋', is: '✅', hata: '⚠️', ad: '💬', baglanti: '🔌' }
+function tercihOku(ad, varsayilan) {
+  try { const v = localStorage.getItem('mcbot-' + ad); return v === null ? varsayilan : v === '1' } catch (e) { return varsayilan }
+}
+function tercihYaz(ad, deger) {
+  try { localStorage.setItem('mcbot-' + ad, deger ? '1' : '0') } catch (e) {}
+}
+const masaustuVar = typeof Notification !== 'undefined'
+$('c-ses').checked = tercihOku('ses', true)
+$('c-masaustu').checked = masaustuVar && tercihOku('masaustu', false) && Notification.permission === 'granted'
+$('c-masaustu-satir').hidden = !masaustuVar
+$('c-ses').onchange = () => { tercihYaz('ses', $('c-ses').checked); if ($('c-ses').checked) sesCal('is') }
+$('c-masaustu').onchange = async () => {
+  const kutu = $('c-masaustu')
+  if (kutu.checked && Notification.permission !== 'granted') {
+    let izin = 'denied'
+    try { izin = await Notification.requestPermission() } catch (e) {}
+    if (izin !== 'granted') { kutu.checked = false; bildir('Masaüstü bildirimine izin verilmedi.', false) }
+  }
+  tercihYaz('masaustu', kutu.checked)
+}
+
+let sesBaglam = null
+function sesCal(tur) {
+  try {
+    if (!sesBaglam) sesBaglam = new (window.AudioContext || window.webkitAudioContext)()
+    if (sesBaglam.state === 'suspended') sesBaglam.resume()
+    const notalar = KOTU_BILDIRIM.includes(tur) ? [440, 330] : [660, 880]
+    notalar.forEach((frekans, i) => {
+      const o = sesBaglam.createOscillator()
+      const g = sesBaglam.createGain()
+      o.type = 'sine'
+      o.frequency.value = frekans
+      const t = sesBaglam.currentTime + i * 0.18
+      g.gain.setValueAtTime(0.0001, t)
+      g.gain.exponentialRampToValueAtTime(0.25, t + 0.02)
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16)
+      o.connect(g)
+      g.connect(sesBaglam.destination)
+      o.start(t)
+      o.stop(t + 0.17)
+    })
+  } catch (e) {}
+}
+// Tarayıcılar sesi ilk tıklamadan sonra açar
+document.addEventListener('click', () => { if (sesBaglam && sesBaglam.state === 'suspended') sesBaglam.resume() })
+
+let sonBildirim = null
+let bildirimImza = ''
+function bildirimleriIsle(liste) {
+  liste = liste || []
+  const enSon = liste.length ? liste[liste.length - 1].no : 0
+  if (sonBildirim !== null && enSon > sonBildirim) {
+    for (const b of liste.filter((x) => x.no > sonBildirim)) {
+      const iyi = !KOTU_BILDIRIM.includes(b.tur)
+      bildir((SIMGE[b.tur] || '') + ' ' + b.metin, iyi)
+      if ($('c-ses').checked) sesCal(b.tur)
+      if (masaustuVar && $('c-masaustu').checked && Notification.permission === 'granted') {
+        try {
+          const n = new Notification('MCBot', { body: b.metin, tag: 'mcbot-' + b.no })
+          n.onclick = () => window.focus()
+        } catch (e) {}
+      }
+    }
+  }
+  sonBildirim = enSon // ilk açılışta eskiler için ses çalmasın; bot yeniden başlayınca sayı sıfırlanır
+  const imza = String(enSon) + ':' + liste.length
+  if (imza === bildirimImza) return
+  bildirimImza = imza
+  const ul = $('bildirim-liste')
+  ul.innerHTML = ''
+  const son = liste.slice(-10).reverse()
+  if (!son.length) {
+    const li = document.createElement('li')
+    li.className = 'bos'
+    li.textContent = 'Henüz bildirim yok.'
+    ul.appendChild(li)
+    return
+  }
+  for (const b of son) {
+    const li = document.createElement('li')
+    if (KOTU_BILDIRIM.includes(b.tur)) li.className = 'kotu'
+    const zaman = document.createElement('time')
+    zaman.textContent = new Date(b.zaman).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })
+    const metin = document.createElement('span')
+    metin.textContent = (SIMGE[b.tur] || '') + ' ' + b.metin
+    li.appendChild(zaman)
+    li.appendChild(metin)
+    ul.appendChild(li)
+  }
+}
+
+// ---------------------------------------------------------------- komut düğmeleri
+// "Kim için" listesi: oyundaki sahipler önce, sonra diğer sahipler (oyunda değil)
+function kimListesiCiz(v) {
+  const sec = $('i-kim')
+  const oyundakiler = v.bot ? v.bot.oyuncular : []
+  const kucuk = (x) => x.toLowerCase()
+  const sahipler = (ayar && ayar.sahipler) || []
+  const oyunda = sahipler.filter((s) => oyundakiler.some((o) => kucuk(o) === kucuk(s)))
+  const disarida = sahipler.filter((s) => !oyunda.includes(s))
+  const secenekler = oyunda.map((s) => [s, s]).concat(disarida.map((s) => [s, s + ' (oyunda değil)']))
+  const imza = JSON.stringify(secenekler)
+  if (sec.dataset.imza !== imza) {
+    const onceki = sec.value
+    sec.innerHTML = ''
+    for (const [deger, yazi] of secenekler) {
+      const o = document.createElement('option')
+      o.value = deger
+      o.textContent = yazi
+      sec.appendChild(o)
+    }
+    if (secenekler.some(([d]) => d === onceki)) sec.value = onceki
+    sec.dataset.imza = imza
+  }
+  const hazir = Boolean(v.oyunda) && secenekler.length > 0
+  for (const b of document.querySelectorAll('#komutlar button, #f-komut button')) b.disabled = !hazir
+  $('komut-bilgi').textContent = !v.oyunda ? 'Bot oyunda değilken komut verilemez.'
+    : !secenekler.length ? 'Önce aşağıdan bir sahip ekleyin.'
+    : 'Komutlar seçilen sahip sohbete yazmış gibi çalışır; bot cevabını sohbete yazar (aşağıdaki kayıtlarda görünür).'
+}
+
+async function komutGonder(metin) {
+  try {
+    const v = await istek('/api/komut', { metin, kim: $('i-kim').value })
+    bildir(v.mesaj)
+    gecmiseEkle(metin)
+    yenile()
+  } catch (e) { bildir(e.message, false) }
+}
+
+// Son 10 komut (bu bilgisayarda saklanır); tıklayınca tekrar çalışır
+function gecmisOku() {
+  try { const g = JSON.parse(localStorage.getItem('mcbot-gecmis') || '[]'); return Array.isArray(g) ? g : [] } catch (e) { return [] }
+}
+function gecmiseEkle(metin) {
+  const g = [metin].concat(gecmisOku().filter((x) => x !== metin)).slice(0, 10)
+  try { localStorage.setItem('mcbot-gecmis', JSON.stringify(g)) } catch (e) {}
+  gecmisCiz()
+}
+function gecmisCiz() {
+  const kutu = $('gecmis-liste')
+  kutu.innerHTML = ''
+  const g = gecmisOku()
+  if (!g.length) {
+    const b = document.createElement('span')
+    b.className = 'bos'
+    b.textContent = 'Panelden verilen komutlar burada görünür.'
+    kutu.appendChild(b)
+    return
+  }
+  for (const metin of g) {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'ikincil'
+    b.textContent = metin
+    b.title = 'Tekrar çalıştır'
+    b.onclick = () => komutGonder(metin)
+    kutu.appendChild(b)
+  }
+}
+gecmisCiz()
+
+// Kayıtlı noktalar: tıklayınca bot oraya gider
+let noktaImza = ''
+function noktalariCiz(v) {
+  const liste = ((ayar && ayar.noktalar) || []).filter((n) => n.sunucu === ayar.host)
+  const imza = JSON.stringify(liste) + String(Boolean(v.oyunda))
+  if (imza === noktaImza) return
+  noktaImza = imza
+  const kutu = $('nokta-liste')
+  kutu.innerHTML = ''
+  if (!liste.length) {
+    const b = document.createElement('span')
+    b.className = 'bos'
+    b.textContent = 'Henüz yok. Oyunda bir yerde durup !kaydet maden yazın.'
+    kutu.appendChild(b)
+    return
+  }
+  for (const n of liste) {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.className = 'ikincil'
+    b.textContent = n.ad
+    b.title = 'Git: ' + n.x + ' ' + n.y + ' ' + n.z
+    b.disabled = !v.oyunda
+    b.onclick = () => komutGonder('!git ' + n.ad)
+    kutu.appendChild(b)
+  }
+}
+for (const b of document.querySelectorAll('#komutlar button')) b.onclick = () => komutGonder(b.dataset.komut)
+$('f-komut').onsubmit = (e) => {
+  e.preventDefault()
+  let metin = $('i-komut').value.trim()
+  if (!metin) return
+  if (!metin.startsWith('!')) metin = '!' + metin
+  $('i-komut').value = ''
+  komutGonder(metin)
+}
+
 yenile()
 setInterval(yenile, 1000)
 
 // ---------------------------------------------------------------- harita
+$('harita').onclick = (e) => {
+  const h = sonHarita
+  if (!haritaTiklanir || !h || h.yok) return
+  const cv = $('harita')
+  const kutu = cv.getBoundingClientRect()
+  const s = kutu.width / h.n
+  const dx = Math.floor((e.clientX - kutu.left) / s) - h.r
+  const dz = Math.floor((e.clientY - kutu.top) / s) - h.r
+  const x = h.merkez[0] + dx
+  const z = h.merkez[2] + dz
+  haritaHedef = { x, z, zaman: Date.now() }
+  komutGonder('!git ' + x + ' ' + z)
+  haritaYenile()
+}
+
 async function haritaYenile() {
   if (document.hidden || $('ana').hidden) return
   let h
@@ -640,6 +1078,7 @@ async function haritaYenile() {
   const c = cv.getContext('2d')
   c.fillStyle = '#1c1f24'
   c.fillRect(0, 0, cv.width, cv.height)
+  sonHarita = h
   if (!h || h.yok) {
     $('harita-bilgi').textContent = 'Bot oyunda değil.'
     return
@@ -664,6 +1103,18 @@ async function haritaYenile() {
     nokta(x, y, s * 0.9, '#3d8bfd')
     c.lineWidth = 3; c.strokeStyle = 'rgba(0,0,0,.75)'; c.strokeText(o.ad, x, y - s * 1.4)
     c.fillStyle = '#fff'; c.fillText(o.ad, x, y - s * 1.4)
+  }
+  // tıklanan hedef: bot varınca ya da 3 dakika geçince silinir
+  if (haritaHedef) {
+    const hx = haritaHedef.x - h.merkez[0]
+    const hz = haritaHedef.z - h.merkez[2]
+    if ((Math.abs(hx) <= 1 && Math.abs(hz) <= 1) || Date.now() - haritaHedef.zaman > 180000) haritaHedef = null
+    else if (Math.abs(hx) <= h.r && Math.abs(hz) <= h.r) {
+      const [tx, ty] = yer(hx, hz)
+      c.lineWidth = 2.5; c.strokeStyle = '#ffd23f'
+      c.beginPath(); c.moveTo(tx - s * 1.2, ty - s * 1.2); c.lineTo(tx + s * 1.2, ty + s * 1.2)
+      c.moveTo(tx + s * 1.2, ty - s * 1.2); c.lineTo(tx - s * 1.2, ty + s * 1.2); c.stroke()
+    }
   }
   // bot: baktığı yöne dönük ok (yaw 0 = kuzey, yön vektörü (-sin, -cos))
   const [bx, by] = yer(0, 0)

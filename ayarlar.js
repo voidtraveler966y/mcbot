@@ -11,7 +11,9 @@ const DOSYA = path.join(KLASOR, 'ayarlar.json')
 const HESAP_KLASORU = path.join(KLASOR, 'hesap') // Microsoft girişinin hatırlandığı yer (paylaşmayın!)
 
 const VARSAYILAN = {
-  host: '', // sunucu adresi
+  tur: 'sunucu', // nereye girsin: 'sunucu' (adresi yazılan sunucu) ya da 'lan' ("LAN'a Aç" ile açılan dünya)
+  lanAd: '', // LAN'da seçilen dünyanın adı (port değişse de aynı dünyayı bulmak için)
+  host: '', // sunucu adresi (LAN'da dünyayı açan bilgisayarın adresi)
   port: null, // boş (null) ise otomatik bulunur
   username: 'MCBot', // botun oyundaki adı (Microsoft girişinde ad hesaptan gelir)
   version: '1.21.4', // sunucunun Minecraft sürümü; boş ise otomatik
@@ -107,10 +109,18 @@ function dogrula(gelen) {
     ayar.sahipler = liste
   }
 
+  if (gelen.tur !== undefined) {
+    if (!['sunucu', 'lan'].includes(gelen.tur)) return { hata: 'Bağlantı türü geçersiz.' }
+    ayar.tur = gelen.tur
+  }
+  if (gelen.lanAd !== undefined) ayar.lanAd = String(gelen.lanAd).slice(0, 100)
+
   if (gelen.paneliAc !== undefined) ayar.paneliAc = Boolean(gelen.paneliAc)
   if (gelen.kurulumTamam !== undefined) ayar.kurulumTamam = Boolean(gelen.kurulumTamam)
 
-  if (ayar.kurulumTamam && !ayar.host) return { hata: 'Sunucu adresi yazılmalı.' }
+  if (ayar.kurulumTamam && !ayar.host) {
+    return { hata: ayar.tur === 'lan' ? 'Listeden bir LAN dünyası seçin.' : 'Sunucu adresi yazılmalı.' }
+  }
   return { ayar }
 }
 
